@@ -25,12 +25,9 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3003;
 
-// Parse JSON request bodies and allow large payloads for base64 audio
+// 1️⃣ Core middleware first
 app.use(express.json({ limit: '50mb' }));
 
-// Configure CORS. If CORS_ORIGINS is provided as a comma-separated
-// list of allowed origins, only those origins will be accepted. If
-// omitted, all origins are allowed in development for convenience.
 const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
   : [];
@@ -38,7 +35,6 @@ const allowedOrigins = process.env.CORS_ORIGINS
 app.use(
   cors({
     origin: (origin, callback) => {
-      // If no origin (e.g. curl) or no restrictions, allow.
       if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
@@ -48,6 +44,20 @@ app.use(
   })
 );
 
+// 2️⃣ HEALTH CHECKS — PUT THEM HERE 👇
+app.get('/health', (req, res) => {
+  res.status(200).send('ok');
+});
+
+app.get('/api/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: Date.now()
+  });
+});
+
+// 3️⃣ API ROUTES
 app.post('/api/transcribe', async (req, res) => {
   try {
     const { audio, mimeType, accent } = req.body;

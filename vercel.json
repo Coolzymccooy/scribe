@@ -2,7 +2,8 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://YOUR_RENDER_BACKEND_URL/api/$1"
+      "destination": "https://scribe-9e3p.onrender.com/api/$1"
     }
   ]
 }
+

@@ -119,10 +119,16 @@ app.post('/api/support', async (req, res) => {
     const answer = await askSupport(question, history);
     res.json({ answer });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error answering support question' });
+    console.error("SUPPORT ERROR:", err);
+    res.status(500).json({
+      error: "Support failed",
+      details: err?.message || String(err),
+      gotBodyKeys: Object.keys(req.body || {}),
+      gotQuestionType: typeof req.body?.question
+    });
   }
 });
+
 
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);

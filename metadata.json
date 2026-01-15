@@ -1,0 +1,7 @@
+{
+  "name": "ScribeAI - Offline-First Meeting Assistant",
+  "description": "A high-performance AI meeting assistant for transcription, summarization, and action-item extraction with specialized accent handling.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

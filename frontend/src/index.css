@@ -1,0 +1,122 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+/*
+ * Global styles for the ScribeAI frontend. We avoid bundling Tailwind
+ * via the CDN and instead rely on simple custom CSS rules and utility
+ * classes defined here. The variables defined on :root allow the
+ * dark/light mode toggle to work by switching the html class. See
+ * App.tsx for where the theme is set on the document element.
+ */
+
+ :root {
+  font-size: 14px; /* makes everything slightly more compact */
+}
+
+ :root { color-scheme: dark; }
+body { margin: 0; }
+
+html, body {
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+
+:root {
+  --bg-deep: #020617;
+  --text-main: #f8fafc;
+}
+
+html.light {
+  --bg-deep: #f8fafc;
+  --text-main: #0f172a;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--bg-deep);
+  color: var(--text-main);
+  overflow-x: hidden;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Background gradient used behind the app. Elements with this class
+ * should be placed behind the main content (e.g. via position: fixed
+ * and negative z-index) to create a subtle, soft gradient effect.
+ */
+.mesh-gradient {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-color: var(--bg-deep);
+  background-image:
+    radial-gradient(at 0% 0%, hsla(253, 16%, 7%, 0.3) 0, transparent 50%),
+    radial-gradient(at 50% 0%, hsla(225, 39%, 30%, 0.1) 0, transparent 50%);
+}
+
+html.light .mesh-gradient {
+  background-image:
+    radial-gradient(at 0% 0%, hsla(253, 80%, 90%, 1) 0, transparent 50%),
+    radial-gradient(at 50% 0%, hsla(225, 80%, 95%, 1) 0, transparent 50%);
+}
+
+/* Scrollbar customisation for better aesthetics. */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.4);
+  border-radius: 10px;
+}
+
+.neural-text-glow {
+  text-shadow: 0 0 30px rgba(99, 102, 241, 0.4);
+}
+
+/* Tooltip styling used by the Tooltip component in App.tsx. */
+.tooltip {
+  visibility: hidden;
+  position: absolute;
+  z-index: 9999;
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: white;
+  background: #4f46e5;
+  border-radius: 8px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+}
+
+.tooltip-top {
+  bottom: 120%;
+  left: 50%;
+  transform: translateX(-50%) translateY(5px);
+}
+
+.tooltip-bottom {
+  top: 120%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-5px);
+}
+
+.group:hover .tooltip {
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+button {
+  touch-action: manipulation;
+}

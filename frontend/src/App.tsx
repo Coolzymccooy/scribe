@@ -59,52 +59,24 @@ const formatTime = (seconds: number) => {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 };
 
-const pad2 = (n: number) => String(n).padStart(2, "0");
+const formatDurationHMS = (seconds: number) => formatTime(seconds);
 
-const formatDurationHMS = (totalSeconds: number) => {
-  const s = Math.max(0, Math.floor(totalSeconds || 0));
-  const hh = Math.floor(s / 3600);
-  const mm = Math.floor((s % 3600) / 60);
-  const ss = s % 60;
-  return hh > 0 ? `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}` : `${pad2(mm)}:${pad2(ss)}`;
+const formatRecordedAt = (iso?: string) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  // Example: 17 Jan 2026 • 12:24
+  const datePart = new Intl.DateTimeFormat(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(d);
+  const timePart = new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(d);
+  return `${datePart} • ${timePart}`;
 };
-
-const formatRecordedAt = (isoOrMs?: string | number) => {
-  if (!isoOrMs) return "—";
-  const d = typeof isoOrMs === "number" ? new Date(isoOrMs) : new Date(isoOrMs);
-  if (Number.isNaN(d.getTime())) return "—";
-  const date = d.toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
-  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  return `${date} • ${time}`;
-};
-
-const normalizeMimeType = (file: File) => {
-  const name = (file.name || "").toLowerCase();
-  const t = (file.type || "").toLowerCase();
-
-  if (t === "audio/x-m4a" || name.endsWith(".m4a")) return "audio/mp4";
-  if (name.endsWith(".mp3")) return "audio/mpeg";
-  if (name.endsWith(".wav")) return "audio/wav";
-  if (name.endsWith(".webm")) return "audio/webm";
-  if (name.endsWith(".ogg")) return "audio/ogg";
-  if (name.endsWith(".mp4")) return "video/mp4";
-
-  if (t) return t;
-  return "audio/mpeg";
-};
-
-const fileToBase64Payload = (fileOrBlob: Blob) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = String(reader.result || "");
-      const parts = result.split(",");
-      resolve(parts[1] || "");
-    };
-    reader.onerror = () => reject(new Error("Failed to read audio"));
-    reader.readAsDataURL(fileOrBlob);
-  });
-
 
 const normalizeTranscript = (raw: any): TranscriptSegment[] => {
   // Backend may return a string transcript or a richer structure.
@@ -606,6 +578,36 @@ const App: React.FC = () => {
     { id: "zoom", name: "Zoom Sync", icon: "📹", connected: false },
   ]);
 
+  /** -----------------------------
+   * Auto-listen (MVP)
+   * - Shows a banner shortly before a scheduled event
+   * - User still must click "Start listening" (browser mic permission)
+   * ------------------------------ */
+
+  const [autoListenEnabled, setAutoListenEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem("scribe_auto_listen_enabled");
+    return saved === "1";
+  });
+
+  const [autoListenLeadMinutes, setAutoListenLeadMinutes] = useState<number>(() => {
+    const saved = localStorage.getItem("scribe_auto_listen_lead_minutes");
+    const n = saved ? Number(saved) : 2;
+    return Number.isFinite(n) && n >= 0 ? n : 2;
+  });
+
+  const [upcomingEvents, setUpcomingEvents] = useState<CalendarEvent[]>([]);
+  const [dismissedEventIds, setDismissedEventIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("scribe_auto_listen_dismissed");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [autoListenBannerId, setAutoListenBannerId] = useState<string | null>(null);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -615,6 +617,91 @@ const App: React.FC = () => {
     setToast({ message, type });
     window.setTimeout(() => setToast(null), 3000);
   };
+
+  // Persist auto-listen prefs
+  useEffect(() => {
+    localStorage.setItem("scribe_auto_listen_enabled", autoListenEnabled ? "1" : "0");
+  }, [autoListenEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem("scribe_auto_listen_lead_minutes", String(autoListenLeadMinutes));
+  }, [autoListenLeadMinutes]);
+
+  useEffect(() => {
+    localStorage.setItem("scribe_auto_listen_dismissed", JSON.stringify(dismissedEventIds));
+  }, [dismissedEventIds]);
+
+  const loadUpcomingEvents = async () => {
+    try {
+      const res = await fetch("/api/calendar/upcoming", {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const events = Array.isArray(data?.events) ? data.events : Array.isArray(data) ? data : [];
+      setUpcomingEvents(events);
+    } catch {
+      // Silent in MVP (backend may not be wired yet)
+    }
+  };
+
+  // Poll upcoming events when enabled
+  useEffect(() => {
+    if (!autoListenEnabled) return;
+    loadUpcomingEvents();
+    const t = window.setInterval(loadUpcomingEvents, 30_000);
+    return () => window.clearInterval(t);
+  }, [autoListenEnabled]);
+
+  const nextAutoListenEvent = useMemo(() => {
+    if (!autoListenEnabled) return null;
+    const now = Date.now();
+    const candidates = (upcomingEvents || [])
+      .filter((e) => e && !dismissedEventIds.includes(e.id))
+      .map((e) => ({ e, start: new Date(e.startTime).getTime() }))
+      .filter((x) => Number.isFinite(x.start) && x.start >= now - 5 * 60_000) // keep a short grace window
+      .sort((a, b) => a.start - b.start);
+
+    return candidates.length ? candidates[0].e : null;
+  }, [autoListenEnabled, upcomingEvents, dismissedEventIds]);
+
+  // Decide when to surface the banner
+  useEffect(() => {
+    if (!autoListenEnabled) {
+      setAutoListenBannerId(null);
+      return;
+    }
+    if (!nextAutoListenEvent) {
+      setAutoListenBannerId(null);
+      return;
+    }
+    const startMs = new Date(nextAutoListenEvent.startTime).getTime();
+    if (!Number.isFinite(startMs)) {
+      setAutoListenBannerId(null);
+      return;
+    }
+
+    const tick = () => {
+      const now = Date.now();
+      const diff = startMs - now;
+      const leadMs = Math.max(0, autoListenLeadMinutes) * 60_000;
+
+      // Show banner when within lead window up to meeting start
+      if (diff <= leadMs && diff >= -30_000 && !isRecording && !isProcessing) {
+        setAutoListenBannerId(nextAutoListenEvent.id);
+      }
+
+      // Hide if too early or long after start
+      if (diff > leadMs || diff < -2 * 60_000) {
+        setAutoListenBannerId(null);
+      }
+    };
+
+    tick();
+    const t = window.setInterval(tick, 1_000);
+    return () => window.clearInterval(t);
+  }, [autoListenEnabled, nextAutoListenEvent, autoListenLeadMinutes, isRecording, isProcessing]);
 
   const selectedMeeting = useMemo(
     () => meetings.find((m) => m.id === selectedMeetingId) || null,
@@ -724,7 +811,16 @@ const App: React.FC = () => {
         const storageKey = `audio_${Date.now()}`;
         await saveAudioBlob(storageKey, audioBlob);
 
-        const base64Audio = await fileToBase64Payload(audioBlob);
+        const base64Audio = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = String(reader.result || "");
+            const parts = result.split(",");
+            resolve(parts[1] || "");
+          };
+          reader.onerror = () => reject(new Error("Failed to read audio"));
+          reader.readAsDataURL(audioBlob);
+        });
 
         showToast("AI Processing Transcript...", "info");
 
@@ -789,75 +885,6 @@ const App: React.FC = () => {
     setIsRecording(false);
   }, [accentMode, inputSource, recordingTime]);
 
-  const handleUploadAudio = useCallback(async (file: File) => {
-    if (isProcessing || isRecording) return;
-
-    try {
-      setIsProcessing(true);
-
-      const mimeType = normalizeMimeType(file);
-      const storageKey = `upload_${Date.now()}_${file.name || 'audio'}`;
-
-      // store original blob so you can replay later (same storage pipeline as recordings)
-      try {
-        await saveAudioBlob(storageKey, file);
-      } catch {
-        // storage failure shouldn't block analysis
-      }
-
-      const base64Audio = await fileToBase64Payload(file);
-
-      showToast('AI Processing Transcript...', 'info');
-
-      // 1) Transcribe
-      const rawTranscript = await transcribeAudio(base64Audio, mimeType, accentMode);
-      const transcriptSegments = normalizeTranscript(rawTranscript);
-
-      // 2) Analyze
-      const transcriptForBackend =
-        typeof rawTranscript === 'string'
-          ? rawTranscript
-          : transcriptSegments.map((s) => s.text).join('\n');
-
-      const rawSummary = await analyzeMeeting(transcriptForBackend, 'meeting', accentMode);
-      const summary = normalizeSummary(rawSummary);
-
-      // 3) Create meeting note
-      const id = `m_${Date.now()}`;
-      const createdAtIso = new Date().toISOString();
-      const titleFromName = (file.name || 'Uploaded Audio').replace(/\.[^/.]+$/, '');
-      const title = titleFromName || safeTitleFromTranscript(transcriptSegments, 'Uploaded Audio');
-
-      const newMeeting: MeetingNote = {
-        id,
-        title,
-        date: createdAtIso,
-        duration: 0,
-        type: MeetingType.OTHER,
-        transcript: transcriptSegments,
-        summary,
-        tags: [],
-        accentPreference: accentMode,
-        audioStorageKey: storageKey,
-        chatHistory: [],
-        syncStatus: 'local',
-        inputSource: 'Uploaded File',
-      };
-
-      setMeetings((prev) => [newMeeting, ...prev]);
-      setSelectedMeetingId(id);
-      setView('details');
-
-      showToast('Upload processed', 'success');
-    } catch (err) {
-      console.error(err);
-      showToast('Upload failed', 'info');
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [accentMode, isProcessing, isRecording]);
-
-
   useEffect(() => {
     if (!isRecording) return;
     const timer = window.setInterval(() => setRecordingTime((t) => t + 1), 1000);
@@ -913,6 +940,59 @@ const App: React.FC = () => {
 
   return (
     <Layout {...layoutProps}>
+      {/* AUTO-LISTEN BANNER (MVP) */}
+      {autoListenEnabled && autoListenBannerId && nextAutoListenEvent && nextAutoListenEvent.id === autoListenBannerId && (
+        <div className="max-w-7xl mx-auto mb-6">
+          <div className="relative overflow-hidden rounded-[2rem] border border-indigo-500/30 bg-indigo-600/10 backdrop-blur-xl p-4 sm:p-5 shadow-xl">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
+              <div className="flex-1">
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.25em] text-indigo-400">
+                    Auto-listen armed
+                  </span>
+                </div>
+                <div className="mt-2 font-black text-white text-base sm:text-lg leading-tight">
+                  {nextAutoListenEvent.title || "Upcoming meeting"}
+                </div>
+                <div className="mt-1 text-[11px] font-bold text-slate-300">
+                  Starts at {formatRecordedAt(nextAutoListenEvent.startTime)}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={async () => {
+                    setView("recorder");
+                    showToast("Ready to capture. Tap mic to allow access.", "info");
+                    // Browser mic access still requires user gesture.
+                    // We can safely start recording here because this click IS a gesture.
+                    try {
+                      await startRecording();
+                    } catch {
+                      // If permissions block, user can tap the mic button.
+                    }
+                  }}
+                  disabled={isRecording || isProcessing}
+                  className="px-5 py-3 rounded-2xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-indigo-700 transition disabled:opacity-50"
+                >
+                  Start Listening
+                </button>
+                <button
+                  onClick={() => {
+                    setDismissedEventIds((prev) => Array.from(new Set([...prev, autoListenBannerId])));
+                    setAutoListenBannerId(null);
+                  }}
+                  className="px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-white/80 text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* DASHBOARD */}
       {view === "dashboard" && (
         <div className="max-w-7xl mx-auto space-y-10">
@@ -991,13 +1071,15 @@ const App: React.FC = () => {
 
                     <h3 className="text-lg md:text-xl font-black line-clamp-2 leading-tight">{m.title}</h3>
 
+                    <div className="mt-3 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                      <span>{formatRecordedAt(m.date)}</span>
+                      <span>{formatDurationHMS(m.duration)}</span>
+                    </div>
+
                     <div className="mt-7 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-500 border-t border-slate-200 dark:border-white/5 pt-5">
-                      <div className="flex flex-col gap-1">
-                        <span className="opacity-80">{formatRecordedAt(m.date)}</span>
-                        <div className="flex items-center">
-                          <PlayIcon className="mr-3 w-4 h-4 text-indigo-600" />
-                          {formatDurationHMS(m.duration)}
-                        </div>
+                      <div className="flex items-center">
+                        <PlayIcon className="mr-3 w-4 h-4 text-indigo-600" />
+                        {formatTime(m.duration)}
                       </div>
                       <button
                         onClick={(e) => {
@@ -1047,13 +1129,15 @@ const App: React.FC = () => {
                       {m.title}
                     </h3>
 
+                    <div className="mt-3 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-indigo-400/70">
+                      <span>{formatRecordedAt(m.date)}</span>
+                      <span>{formatDurationHMS(m.duration)}</span>
+                    </div>
+
                     <div className="mt-7 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-indigo-400/70 border-t border-slate-200 dark:border-white/5 pt-5">
-                      <div className="flex flex-col gap-1">
-                        <span className="opacity-80">{formatRecordedAt(m.date)}</span>
-                        <div className="flex items-center">
-                          <PlayIcon className="mr-3 w-4 h-4 text-indigo-600" />
-                          {formatDurationHMS(m.duration)}
-                        </div>
+                      <div className="flex items-center">
+                        <PlayIcon className="mr-3 w-4 h-4 text-indigo-600" />
+                        {formatTime(m.duration)}
                       </div>
                       <span className="flex items-center gap-2">
                         <span>☁️</span> <span>Verified</span>
@@ -1116,11 +1200,7 @@ const App: React.FC = () => {
             </p>
           </div>
 
-          {/* RECORD + UPLOAD (SIDE BY SIDE) */}
-          <div className="relative flex items-center justify-center gap-5">
-
-
-            <div className="relative group">
+          <div className="relative group">
             {isRecording ? (
               <div className="relative flex items-center justify-center">
                 <NeuralVisualizer analyser={analyserRef.current} />
@@ -1143,36 +1223,7 @@ const App: React.FC = () => {
               </button>
             )}
             <Tooltip text={isRecording ? "Stop Capture" : "Start Capture"} />
-            </div>
-
-            {/* UPLOAD CONTROL (BESIDE MIC) */}
-            {!isRecording && (
-              <div className="relative group">
-                <label
-                  className={`cursor-pointer select-none w-28 h-28 md:w-32 md:h-32 rounded-[2rem] flex items-center justify-center
-                    bg-indigo-600/20 border border-indigo-500/20 text-indigo-200 backdrop-blur-md
-                    ${isProcessing ? "opacity-50 pointer-events-none" : "hover:bg-indigo-600/25 hover:scale-[1.02]"}
-                    transition`}
-                  title="Upload an audio/video file to transcribe + analyze"
-                >
-                  <span className="text-[10px] font-black uppercase tracking-widest">Upload</span>
-                  <input
-                    type="file"
-                    accept="audio/*,video/*"
-                    hidden
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      e.currentTarget.value = "";
-                      await handleUploadAudio(file);
-                    }}
-                  />
-                </label>
-                <Tooltip text="Upload Audio" position="bottom" />
-              </div>
-            )}
           </div>
-
 
           <div className="w-full max-w-3xl p-7 rounded-[3rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 backdrop-blur-3xl shadow-2xl grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-2">
@@ -1238,9 +1289,7 @@ const App: React.FC = () => {
                   {selectedMeeting.type}
                 </span>
                 <span>•</span>
-                <span>{formatRecordedAt(selectedMeeting.date)}</span>
-                <span>•</span>
-                <span>{formatDurationHMS(selectedMeeting.duration)}</span>
+                <span>{formatTime(selectedMeeting.duration)}</span>
               </div>
 
               <div className="space-y-4 max-h-[520px] overflow-y-auto pr-4">
@@ -1555,6 +1604,74 @@ const App: React.FC = () => {
                       className="w-full h-1 bg-slate-300 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
                     />
                   </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-[10px] font-black uppercase text-indigo-500 tracking-widest border-b border-slate-200 dark:border-white/5 pb-3">
+                Auto-Listen
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="p-5 rounded-[2rem] bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10">
+                  <div className="flex items-start justify-between gap-6">
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Enable</p>
+                      <p className="text-sm font-bold text-slate-700 dark:text-slate-200">
+                        Show a banner shortly before a scheduled meeting starts.
+                      </p>
+                      <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 leading-relaxed">
+                        MVP: this doesn’t auto-capture system audio. It prompts you to start recording (one click).
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={() => setAutoListenEnabled((v) => !v)}
+                      className={`w-14 h-8 rounded-full border transition-all relative ${
+                        autoListenEnabled
+                          ? "bg-indigo-600 border-indigo-500"
+                          : "bg-slate-200 dark:bg-white/10 border-slate-300 dark:border-white/10"
+                      }`}
+                      aria-pressed={autoListenEnabled}
+                    >
+                      <span
+                        className={`absolute top-1 left-1 w-6 h-6 rounded-full bg-white shadow transition-transform ${
+                          autoListenEnabled ? "translate-x-6" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-5 rounded-[2rem] bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 space-y-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 dark:text-slate-400">Lead time</p>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-black text-slate-900 dark:text-white">
+                      {autoListenLeadMinutes} min
+                    </span>
+                    <button
+                      onClick={() => {
+                        if (!autoListenEnabled) setAutoListenEnabled(true);
+                        void loadUpcomingEvents();
+                        showToast("Syncing calendar…", "info");
+                      }}
+                      className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border border-slate-200 dark:border-white/10 hover:bg-slate-100 dark:hover:bg-white/10"
+                    >
+                      Sync Now
+                    </button>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={10}
+                    value={autoListenLeadMinutes}
+                    onChange={(e) => setAutoListenLeadMinutes(parseInt(e.target.value, 10))}
+                    className="w-full h-1 bg-slate-300 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  />
+                  <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    We’ll nudge you when a meeting starts soon.
+                  </p>
                 </div>
               </div>
             </div>

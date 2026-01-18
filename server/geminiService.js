@@ -56,13 +56,35 @@ export async function transcribeAudio(audio, mimeType, accent) {
 
 export async function analyzeMeeting(transcript, type, accent) {
   const ai = getClient();
-  const fullTranscript = transcript.map(s => `[${s.speaker}]: ${s.text}`).join('\n');
+
+  // ✅ Accept both:
+  // 1) array of segments [{speaker,text,...}]
+  // 2) plain string transcript "line1\nline2"
+  const segments = Array.isArray(transcript)
+    ? transcript
+    : typeof transcript === "string"
+      ? transcript
+          .split(/\r?\n/)
+          .map(l => l.trim())
+          .filter(Boolean)
+          .map((text, i) => ({ speaker: `Speaker`, text }))
+      : null;
+
+  if (!segments || segments.length === 0) {
+    throw new Error("Invalid transcript: expected array or string");
+  }
+
+  const fullTranscript = segments
+    .map(s => `[${s.speaker}]: ${s.text}`)
+    .join("\n");
+
   const prompt = `Analyze this ${type} meeting. Context: ${accent} accents.\nTranscript:\n${fullTranscript}`;
+
   const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
+    model: "gemini-3-flash-preview",
     contents: prompt,
     config: {
-      responseMimeType: 'application/json',
+      responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
         properties: {
@@ -71,11 +93,12 @@ export async function analyzeMeeting(transcript, type, accent) {
           decisions: { type: Type.ARRAY, items: { type: Type.STRING } },
           openQuestions: { type: Type.ARRAY, items: { type: Type.STRING } }
         },
-        required: ['executiveSummary', 'actionItems', 'decisions', 'openQuestions']
+        required: ["executiveSummary", "actionItems", "decisions", "openQuestions"]
       }
     }
   });
-  return JSON.parse(response.text || '{}');
+
+  return JSON.parse(response.text || "{}");
 }
 
 export async function askTranscript(meeting, question, history) {

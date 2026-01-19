@@ -78,6 +78,33 @@ const formatRecordedAt = (iso?: string) => {
   return `${datePart} • ${timePart}`;
 };
 
+const normalizeMimeType = (file: File) => {
+  const name = (file.name || "").toLowerCase();
+  const t = (file.type || "").toLowerCase();
+
+  if (t === "audio/x-m4a" || name.endsWith(".m4a")) return "audio/mp4";
+  if (name.endsWith(".mp3")) return "audio/mpeg";
+  if (name.endsWith(".wav")) return "audio/wav";
+  if (name.endsWith(".webm")) return "audio/webm";
+  if (name.endsWith(".ogg")) return "audio/ogg";
+  if (name.endsWith(".mp4")) return "video/mp4";
+
+  if (t) return t;
+  return "audio/mpeg";
+};
+
+const fileToBase64Payload = (fileOrBlob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = String(reader.result || "");
+      const parts = result.split(",");
+      resolve(parts[1] || "");
+    };
+    reader.onerror = () => reject(new Error("Failed to read audio"));
+    reader.readAsDataURL(fileOrBlob);
+  });
+
 const normalizeTranscript = (raw: any): TranscriptSegment[] => {
   // Backend may return a string transcript or a richer structure.
   if (Array.isArray(raw)) {
@@ -885,6 +912,75 @@ const App: React.FC = () => {
     setIsRecording(false);
   }, [accentMode, inputSource, recordingTime]);
 
+  const handleUploadAudio = useCallback(async (file: File) => {
+    if (isProcessing || isRecording) return;
+
+    try {
+      setIsProcessing(true);
+
+      const mimeType = normalizeMimeType(file);
+      const storageKey = `upload_${Date.now()}_${file.name || 'audio'}`;
+
+      // store original blob so you can replay later (same storage pipeline as recordings)
+      try {
+        await saveAudioBlob(storageKey, file);
+      } catch {
+        // storage failure shouldn't block analysis
+      }
+
+      const base64Audio = await fileToBase64Payload(file);
+
+      showToast('AI Processing Transcript...', 'info');
+
+      // 1) Transcribe
+      const rawTranscript = await transcribeAudio(base64Audio, mimeType, accentMode);
+      const transcriptSegments = normalizeTranscript(rawTranscript);
+
+      // 2) Analyze
+      const transcriptForBackend =
+        typeof rawTranscript === 'string'
+          ? rawTranscript
+          : transcriptSegments.map((s) => s.text).join('\n');
+
+      const rawSummary = await analyzeMeeting(transcriptForBackend, 'meeting', accentMode);
+      const summary = normalizeSummary(rawSummary);
+
+      // 3) Create meeting note
+      const id = `m_${Date.now()}`;
+      const createdAtIso = new Date().toISOString();
+      const titleFromName = (file.name || 'Uploaded Audio').replace(/\.[^/.]+$/, '');
+      const title = titleFromName || safeTitleFromTranscript(transcriptSegments, 'Uploaded Audio');
+
+      const newMeeting: MeetingNote = {
+        id,
+        title,
+        date: createdAtIso,
+        duration: 0,
+        type: MeetingType.OTHER,
+        transcript: transcriptSegments,
+        summary,
+        tags: [],
+        accentPreference: accentMode,
+        audioStorageKey: storageKey,
+        chatHistory: [],
+        syncStatus: 'local',
+        inputSource: 'Uploaded File',
+      };
+
+      setMeetings((prev) => [newMeeting, ...prev]);
+      setSelectedMeetingId(id);
+      setView('details');
+
+      showToast('Upload processed', 'success');
+	    } catch (err: any) {
+	      console.error(err);
+	      const msg = String(err?.message || err || 'Upload failed');
+	      showToast(`Upload failed: ${msg}`, 'info');
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [accentMode, isProcessing, isRecording]);
+
   useEffect(() => {
     if (!isRecording) return;
     const timer = window.setInterval(() => setRecordingTime((t) => t + 1), 1000);
@@ -1199,32 +1295,65 @@ const App: React.FC = () => {
               {isRecording ? `Recording • ${formatTime(recordingTime)}` : isProcessing ? "Processing…" : "Tap to start"}
             </p>
           </div>
+{/* RECORD + UPLOAD (SIDE BY SIDE) */}
+<div className="relative flex items-center justify-center gap-5">
+  {/* MAIN RECORD CONTROL */}
+  <div className="relative group">
+    {isRecording ? (
+      <div className="relative flex items-center justify-center">
+        <NeuralVisualizer analyser={analyserRef.current} />
+        <button
+          onClick={stopRecording}
+          className="absolute inset-0 m-auto w-28 h-28 bg-red-600 rounded-[2.5rem] flex items-center justify-center text-white shadow-[0_0_80px_rgba(220,38,38,0.5)] transform hover:scale-110 transition-transform"
+        >
+          <StopIcon className="w-10 h-10" />
+        </button>
+      </div>
+    ) : (
+      <button
+        onClick={startRecording}
+        disabled={isProcessing}
+        className={`w-56 h-56 ${
+          isProcessing ? "bg-indigo-900 animate-pulse" : "bg-indigo-600"
+        } rounded-[2.5rem] flex items-center justify-center text-white shadow-[0_0_100px_rgba(79,70,229,0.35)] transform hover:scale-105 active:scale-95 transition-all`}
+      >
+        <MicIcon className="w-20 h-20 group-hover:rotate-12 transition-transform" />
+      </button>
+    )}
 
-          <div className="relative group">
-            {isRecording ? (
-              <div className="relative flex items-center justify-center">
-                <NeuralVisualizer analyser={analyserRef.current} />
-                <button
-                  onClick={stopRecording}
-                  className="absolute inset-0 m-auto w-28 h-28 bg-red-600 rounded-[2.5rem] flex items-center justify-center text-white shadow-[0_0_80px_rgba(220,38,38,0.5)] transform hover:scale-110 transition-transform"
-                >
-                  <StopIcon className="w-10 h-10" />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={startRecording}
-                disabled={isProcessing}
-                className={`w-56 h-56 ${
-                  isProcessing ? "bg-indigo-900 animate-pulse" : "bg-indigo-600"
-                } rounded-[3.5rem] flex items-center justify-center text-white shadow-[0_0_100px_rgba(79,70,229,0.35)] transform hover:scale-105 active:scale-95 transition-all group`}
-              >
-                <MicIcon className="w-20 h-20 group-hover:rotate-12 transition-transform" />
-              </button>
-            )}
-            <Tooltip text={isRecording ? "Stop Capture" : "Start Capture"} />
-          </div>
+    <Tooltip text={isRecording ? "Stop Capture" : "Start Capture"} />
+  </div>
 
+	  {/* UPLOAD CONTROL (only when not recording) */}
+	  {!isRecording && (
+	    <div className="relative group">
+	      <label
+	        className={`cursor-pointer select-none flex items-center gap-2 px-4 h-14 rounded-2xl
+	          bg-white/[0.04] border border-white/10 text-white/80 backdrop-blur-md
+	          ${isProcessing ? "opacity-40 pointer-events-none" : "hover:bg-white/[0.07] hover:text-white hover:scale-[1.02]"}
+	          transition`}
+	        title="Upload an audio/video file to transcribe + analyze"
+	      >
+	        <FolderIcon className="w-5 h-5" />
+	        <span className="text-[10px] font-black uppercase tracking-widest">Upload</span>
+	        <input
+	          type="file"
+	          accept="audio/*,video/*"
+	          hidden
+	          onChange={async (e) => {
+	            const file = e.target.files?.[0];
+	            if (!file) return;
+	
+	            // allow selecting the same file again
+	            e.currentTarget.value = "";
+	            await handleUploadAudio(file);
+	          }}
+	        />
+	      </label>
+	      <Tooltip text="Upload Audio" position="bottom" />
+	    </div>
+	  )}
+</div>
           <div className="w-full max-w-3xl p-7 rounded-[3rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 backdrop-blur-3xl shadow-2xl grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="space-y-2">
               <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest ml-4">Input</label>

@@ -22,6 +22,14 @@ dotenv.config();
  * configure these as environment variables in the service settings.
  */
 
+
+// 2️⃣ DEBUG CHECK (paste THIS right here)
+console.log("ENV loaded:", { 
+  hasGemini: Boolean(process.env.GEMINI_API_KEY),
+  port: process.env.PORT,
+  cors: process.env.CORS_ORIGINS,
+});
+
 const app = express();
 const PORT = process.env.PORT || 3003;
 

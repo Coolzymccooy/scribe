@@ -1,24 +1,91 @@
-# Logs
-logs
-*.log
+# ===========================
+# VISUAL STUDIO CODE
+# ===========================
+.vscode/
+*.code-workspace
+.history/
+.localhistory/
+
+# ===========================
+# VISUAL STUDIO (.NET backend)
+# ===========================
+.vs/
+bin/
+obj/
+Debug/
+Release/
+TestResults/
+*.user
+*.suo
+
+# ===========================
+# NODE / REACT FRONTEND
+# ===========================
+node_modules/
+dist/
+build/
+out/
+coverage/
+.npm/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+package-lock.json
+pnpm-lock.yaml
 
-node_modules
-dist
-dist-ssr
-*.local
+# ===========================
+# ENVIRONMENT VARIABLES
+# ===========================
+.env
+.env.local
+.env.development.local
+.env.production.local
+.env.test.local
+.env.*
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+# App-specific env files
+frontend/.env
+frontend/.env.*
+server/.env
+server/.env.*
+
+# ===========================
+# OS SPECIFIC JUNK
+# ===========================
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ===========================
+# TOOLING + TEMP FILES
+# ===========================
+*.log
+*.tmp
+*.temp
+*.swp
+*.pid
+*.tsbuildinfo
+
+# ===========================
+# PYTHON (IF YOU USE SCRIPTS)
+# ===========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ===========================
+# IDEs you might use
+# ===========================
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ===========================
+# DOCKER (FUTURE PROOFING)
+# ===========================
+docker-storage/
+docker-data/
+

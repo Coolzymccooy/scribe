@@ -1,0 +1,60 @@
+{
+  "tokenStore": {
+    "microsoft": null,
+    "google": null
+  },
+  "autoListenStore": {
+    "enabled": false,
+    "leadMinutes": 2,
+    "providers": [
+      "google",
+      "microsoft"
+    ]
+  },
+  "analyticsStore": {
+    "endpoints": {
+      "calendarUpcoming": {
+        "count": 16,
+        "totalDurationMs": 1,
+        "errors": 0,
+        "lastError": null
+      },
+      "autoListenSettings": {
+        "count": 15,
+        "totalDurationMs": 3,
+        "errors": 0,
+        "lastError": null
+      },
+      "support": {
+        "count": 1,
+        "totalDurationMs": 4238,
+        "errors": 0,
+        "lastError": null
+      },
+      "transcribe": {
+        "count": 1,
+        "totalDurationMs": 9067,
+        "errors": 0,
+        "lastError": null
+      },
+      "analyze": {
+        "count": 1,
+        "totalDurationMs": 4489,
+        "errors": 0,
+        "lastError": null
+      },
+      "audioRecap": {
+        "count": 1,
+        "totalDurationMs": 8204,
+        "errors": 0,
+        "lastError": null
+      }
+    },
+    "autoListen": {
+      "toggles": 15,
+      "calendarSyncs": 16,
+      "calendarErrors": 0,
+      "lastUpdated": "2026-01-31T22:53:37.946Z"
+    }
+  }
+}

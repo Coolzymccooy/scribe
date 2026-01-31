@@ -10,7 +10,8 @@ import type {
   ChatMessage,
   Theme,
   AISummary,
-  CalendarEvent
+  CalendarEvent,
+  AnalyticsPayload
 } from './types';
 
 import {
@@ -105,6 +106,79 @@ const fileToBase64Payload = (fileOrBlob: Blob) =>
     reader.readAsDataURL(fileOrBlob);
   });
 
+const MAX_AUDIO_DURATION_SECONDS = 90 * 60;
+
+const decodeBase64ToUint8 = (base64: string) => {
+  const binary = atob(base64);
+  const buffer = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    buffer[i] = binary.charCodeAt(i);
+  }
+  return buffer;
+};
+
+const buildWavBlob = (pcmBytes: Uint8Array, sampleRate = 24000) => {
+  const buffer = new ArrayBuffer(44 + pcmBytes.length);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + pcmBytes.length, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, pcmBytes.length, true);
+  new Uint8Array(buffer, 44).set(pcmBytes);
+
+  return new Blob([buffer], { type: "audio/wav" });
+};
+
+const cleanupRecapUrl = (url: string | null) => {
+  if (url) {
+    URL.revokeObjectURL(url);
+  }
+};
+
+const getMediaDuration = (file: File): Promise<number | null> =>
+  new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const media =
+      file.type.startsWith("video") || file.type.startsWith("audio")
+        ? file.type.startsWith("video")
+          ? document.createElement("video")
+          : document.createElement("audio")
+        : document.createElement("video");
+
+    const cleanup = () => {
+      URL.revokeObjectURL(url);
+      media.src = "";
+    };
+
+    media.preload = "metadata";
+    media.onloadedmetadata = () => {
+      const duration = Number.isFinite(media.duration) ? media.duration : null;
+      cleanup();
+      resolve(duration);
+    };
+    media.onerror = () => {
+      cleanup();
+      resolve(null);
+    };
+    media.src = url;
+  });
+
 const normalizeTranscript = (raw: any): TranscriptSegment[] => {
   // Backend may return a string transcript or a richer structure.
   if (Array.isArray(raw)) {
@@ -189,6 +263,9 @@ const safeTitleFromTranscript = (segments: TranscriptSegment[], fallback: string
   const cut = firstText.replace(/\s+/g, " ").slice(0, 42);
   return cut.length < firstText.length ? `${cut}…` : cut;
 };
+
+const AUTO_LISTEN_PROVIDERS = ["google", "microsoft"];
+
 
 const SidebarItem: React.FC<{
   icon: React.ReactNode;
@@ -598,12 +675,66 @@ const App: React.FC = () => {
   ]);
   const [supportInput, setSupportInput] = useState("");
 
+  const [displayStream, setDisplayStream] = useState<MediaStream | null>(null);
+  const displayStreamRef = useRef<MediaStream | null>(null);
+  const [shareMeetingAudio, setShareMeetingAudio] = useState(false);
+
+  const setDisplayStreamState = useCallback((stream: MediaStream | null) => {
+    setDisplayStream(stream);
+    displayStreamRef.current = stream;
+  }, []);
+
+  const clearDisplayStream = useCallback(() => {
+    const activeStream = displayStreamRef.current;
+    if (activeStream) {
+      activeStream.getTracks().forEach((track) => track.stop());
+      setDisplayStream(null);
+      displayStreamRef.current = null;
+    }
+    setShareMeetingAudio(false);
+  }, []);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [recapAudioUrl, setRecapAudioUrl] = useState<string | null>(null);
+  const [recapLoading, setRecapLoading] = useState(false);
+  const [isRecapPlaying, setIsRecapPlaying] = useState(false);
+  const [recapDuration, setRecapDuration] = useState(0);
+
+  const revokeRecapUrl = () => {
+    if (recapAudioUrl) {
+      cleanupRecapUrl(recapAudioUrl);
+    }
+  };
+
+  const resetRecapState = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current.src = "";
+    }
+    revokeRecapUrl();
+    setRecapAudioUrl(null);
+    setRecapDuration(0);
+    setIsRecapPlaying(false);
+  };
+
   const [integrations, setIntegrations] = useState<{ id: string; name: string; icon: string; connected: boolean }[]>([
     { id: "notion", name: "Notion", icon: "📓", connected: false },
     { id: "slack", name: "Slack", icon: "💬", connected: false },
     { id: "hubspot", name: "HubSpot", icon: "📈", connected: false },
     { id: "zoom", name: "Zoom Sync", icon: "📹", connected: false },
   ]);
+
+  const [calendarConnected, setCalendarConnected] = useState<{ google: boolean; microsoft: boolean }>({
+    google: false,
+    microsoft: false,
+  });
+  const [analyticsMetrics, setAnalyticsMetrics] = useState<AnalyticsPayload | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+
+  const baseApiUrl = import.meta.env.VITE_BACKEND_URL?.replace(/\/$/, '') || '';
+  const buildApiUrl = useCallback((path: string) => `${baseApiUrl}${path}`, [baseApiUrl]);
 
   /** -----------------------------
    * Auto-listen (MVP)
@@ -640,10 +771,10 @@ const App: React.FC = () => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
 
-  const showToast = (message: string, type: "success" | "info" = "success") => {
+  const showToast = useCallback((message: string, type: "success" | "info" = "success") => {
     setToast({ message, type });
     window.setTimeout(() => setToast(null), 3000);
-  };
+  }, []);
 
   // Persist auto-listen prefs
   useEffect(() => {
@@ -658,9 +789,9 @@ const App: React.FC = () => {
     localStorage.setItem("scribe_auto_listen_dismissed", JSON.stringify(dismissedEventIds));
   }, [dismissedEventIds]);
 
-  const loadUpcomingEvents = async () => {
+  const loadUpcomingEvents = useCallback(async () => {
     try {
-      const res = await fetch("/api/calendar/upcoming", {
+      const res = await fetch(buildApiUrl("/api/calendar/upcoming"), {
         method: "GET",
         headers: { "Content-Type": "application/json" },
       });
@@ -668,10 +799,22 @@ const App: React.FC = () => {
       const data = await res.json();
       const events = Array.isArray(data?.events) ? data.events : Array.isArray(data) ? data : [];
       setUpcomingEvents(events);
-    } catch {
-      // Silent in MVP (backend may not be wired yet)
+
+      const connected = data?.connected || {};
+      setCalendarConnected({
+        google: Boolean(connected.google),
+        microsoft: Boolean(connected.microsoft),
+      });
+
+      const autoListen = data?.autoListen;
+      if (autoListen) {
+        if (typeof autoListen.enabled === "boolean") setAutoListenEnabled(autoListen.enabled);
+        if (typeof autoListen.leadMinutes === "number") setAutoListenLeadMinutes(autoListen.leadMinutes);
+      }
+    } catch (err) {
+      console.error("UPCOMING EVENTS FETCH ERROR:", err);
     }
-  };
+  }, [buildApiUrl]);
 
   // Poll upcoming events when enabled
   useEffect(() => {
@@ -679,7 +822,108 @@ const App: React.FC = () => {
     loadUpcomingEvents();
     const t = window.setInterval(loadUpcomingEvents, 30_000);
     return () => window.clearInterval(t);
-  }, [autoListenEnabled]);
+  }, [autoListenEnabled, loadUpcomingEvents]);
+
+  useEffect(() => {
+    return () => {
+      resetRecapState();
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearDisplayStream();
+    };
+  }, [clearDisplayStream]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const onPlay = () => setIsRecapPlaying(true);
+    const onPause = () => setIsRecapPlaying(false);
+    const onEnded = () => setIsRecapPlaying(false);
+    const onLoaded = () => setRecapDuration(audio.duration || 0);
+    audio.addEventListener("play", onPlay);
+    audio.addEventListener("pause", onPause);
+    audio.addEventListener("ended", onEnded);
+    audio.addEventListener("loadeddata", onLoaded);
+    return () => {
+      audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("loadeddata", onLoaded);
+    };
+  }, [recapAudioUrl]);
+
+  useEffect(() => {
+    void loadUpcomingEvents();
+  }, [loadUpcomingEvents]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const syncSettings = async () => {
+      try {
+        await fetch(buildApiUrl("/api/auto-listen/settings"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            enabled: autoListenEnabled,
+            leadMinutes: autoListenLeadMinutes,
+            providers: AUTO_LISTEN_PROVIDERS,
+          }),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        console.error("AUTO-LISTEN SYNC ERROR:", err);
+      }
+    };
+
+    void syncSettings();
+    return () => controller.abort();
+  }, [autoListenEnabled, autoListenLeadMinutes, buildApiUrl]);
+
+  const fetchAnalytics = useCallback(async () => {
+    setAnalyticsError(null);
+    setAnalyticsLoading(true);
+    try {
+      const res = await fetch(buildApiUrl("/api/analytics"));
+      if (!res.ok) throw new Error("Failed to load analytics");
+      const data = await res.json();
+      setAnalyticsMetrics(data);
+    } catch (err) {
+      console.error("ANALYTICS FETCH ERROR:", err);
+      setAnalyticsError(String(err));
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, [buildApiUrl]);
+
+  useEffect(() => {
+    if (view !== "analytics") return;
+    void fetchAnalytics();
+  }, [view, fetchAnalytics]);
+
+  const startOAuth = useCallback(
+    async (provider: "google" | "microsoft") => {
+      try {
+        const res = await fetch(buildApiUrl(`/api/auth/${provider}/start`), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+
+        if (!res.ok) throw new Error("OAuth init failed");
+        const data = await res.json();
+        if (!data?.url) throw new Error("No redirect URL");
+
+        window.open(data.url, "_blank", "noopener,noreferrer");
+        showToast(`${provider === "google" ? "Google" : "Microsoft"} authentication opened`, "info");
+      } catch (err) {
+        console.error("OAuth start failed:", err);
+        showToast("Could not start calendar connection", "info");
+      }
+    },
+    [buildApiUrl, showToast]
+  );
 
   const nextAutoListenEvent = useMemo(() => {
     if (!autoListenEnabled) return null;
@@ -797,6 +1041,11 @@ const App: React.FC = () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
+      const recordingStream =
+        shareMeetingAudio && displayStream
+          ? new MediaStream([...stream.getAudioTracks(), ...displayStream.getAudioTracks()])
+          : stream;
+
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = ctx;
 
@@ -806,7 +1055,7 @@ const App: React.FC = () => {
       analyserRef.current = analyser;
       source.connect(analyser);
 
-      const mediaRecorder = new MediaRecorder(stream);
+      const mediaRecorder = new MediaRecorder(recordingStream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -824,7 +1073,7 @@ const App: React.FC = () => {
     } catch {
       alert("Microphone access is required for ScribeAI.");
     }
-  }, []);
+  }, [shareMeetingAudio, displayStream]);
 
   const stopRecording = useCallback(async () => {
     const recorder = mediaRecorderRef.current;
@@ -918,6 +1167,19 @@ const App: React.FC = () => {
     try {
       setIsProcessing(true);
 
+      if (file.type.startsWith("video")) {
+        const duration = await getMediaDuration(file);
+        if (duration !== null) {
+          if (duration > MAX_AUDIO_DURATION_SECONDS) {
+            showToast("Audio longer than 90 minutes is not recommended; please trim before upload.", "info");
+          } else {
+            showToast("Video validated; running transcription and analysis.", "info");
+          }
+        } else {
+          showToast("Could not determine video duration; proceeding with processing.", "info");
+        }
+      }
+
       const mimeType = normalizeMimeType(file);
       const storageKey = `upload_${Date.now()}_${file.name || 'audio'}`;
 
@@ -981,6 +1243,76 @@ const App: React.FC = () => {
     }
   }, [accentMode, isProcessing, isRecording]);
 
+  const handleShareMeetingAudio = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        audio: true,
+        video: true,
+      });
+      stream.getVideoTracks().forEach((track) => track.stop());
+      setDisplayStreamState(stream);
+      setShareMeetingAudio(true);
+      showToast("Meeting audio shared", "info");
+    } catch {
+      showToast("Meeting audio share cancelled", "info");
+    }
+  }, [showToast]);
+
+  const playRecap = useCallback(async () => {
+    if (!selectedMeeting?.summary) {
+      showToast("No summary to recap", "info");
+      return;
+    }
+    setRecapLoading(true);
+    try {
+      const audioData = await generateAudioRecap(selectedMeeting.summary);
+      if (!audioData) {
+        showToast("No audio returned", "info");
+        return;
+      }
+      resetRecapState();
+      const pcmBytes = decodeBase64ToUint8(audioData);
+      const wavBlob = buildWavBlob(pcmBytes, 24000);
+      const url = URL.createObjectURL(wavBlob);
+      setRecapAudioUrl(url);
+      const audio = audioRef.current;
+      if (audio) {
+        audio.src = url;
+        await audio.play();
+      }
+      showToast("Playing Neural Brief");
+    } catch (err) {
+      console.error("Playback error", err);
+      showToast("Audio recap failed", "info");
+    } finally {
+      setRecapLoading(false);
+    }
+  }, [selectedMeeting, showToast]);
+
+  const toggleRecapPlayback = useCallback(async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      await audio.play();
+    } else {
+      audio.pause();
+    }
+  }, []);
+
+  const stopRecapPlayback = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+    setIsRecapPlaying(false);
+  }, []);
+
+  const seekRecap = useCallback((delta: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = Math.max(0, Math.min(audio.duration || 0, audio.currentTime + delta));
+  }, []);
+
   useEffect(() => {
     if (!isRecording) return;
     const timer = window.setInterval(() => setRecordingTime((t) => t + 1), 1000);
@@ -988,6 +1320,34 @@ const App: React.FC = () => {
   }, [isRecording]);
 
   const layoutProps = { view, setView, theme, setTheme, searchQuery, setSearchQuery, toast };
+
+  const calendarProviders = [
+    {
+      id: "google",
+      name: "Google Calendar",
+      icon: "📅",
+      description: "Sync Google Meet and Calendar events so Auto-Listen can arm ahead of time.",
+      connected: calendarConnected.google,
+    },
+    {
+      id: "microsoft",
+      name: "Microsoft 365 Calendar",
+      icon: "📆",
+      description: "Harvest Teams and Outlook invites for instant reminders.",
+      connected: calendarConnected.microsoft,
+    },
+  ];
+
+  const analyticsMetricList = [
+    { key: "transcribe", label: "Transcriptions", accent: "from-indigo-500/80 to-violet-500/60" },
+    { key: "analyze", label: "Summaries", accent: "from-emerald-500/80 to-cyan-500/60" },
+    { key: "ask", label: "Q&A", accent: "from-fuchsia-500/80 to-pink-500/60" },
+    { key: "draftEmail", label: "Email drafts", accent: "from-orange-500/80 to-amber-500/60" },
+    { key: "audioRecap", label: "Audio recaps", accent: "from-teal-500/80 to-sky-500/60" },
+    { key: "support", label: "Support", accent: "from-rose-500/80 to-red-500/60" },
+    { key: "calendarUpcoming", label: "Calendar syncs", accent: "from-cyan-500/80 to-blue-500/60" },
+    { key: "autoListenSettings", label: "Auto listen saves", accent: "from-lime-500/80 to-emerald-500/60" },
+  ];
 
   /** -----------------------------
    * Views
@@ -1057,28 +1417,38 @@ const App: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-3">
-                <button
-                  onClick={async () => {
-                    setView("recorder");
-                    showToast("Ready to capture. Tap mic to allow access.", "info");
-                    // Browser mic access still requires user gesture.
-                    // We can safely start recording here because this click IS a gesture.
-                    try {
-                      await startRecording();
-                    } catch {
-                      // If permissions block, user can tap the mic button.
-                    }
-                  }}
-                  disabled={isRecording || isProcessing}
-                  className="px-5 py-3 rounded-2xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-indigo-700 transition disabled:opacity-50"
+              <button
+                onClick={async () => {
+                  setView("recorder");
+                  showToast("Ready to capture. Tap mic to allow access.", "info");
+                  // Browser mic access still requires user gesture.
+                  // We can safely start recording here because this click IS a gesture.
+                  try {
+                    await startRecording();
+                  } catch {
+                    // If permissions block, user can tap the mic button.
+                  }
+                }}
+                disabled={isRecording || isProcessing}
+                className="px-5 py-3 rounded-2xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-indigo-700 transition disabled:opacity-50"
+              >
+                Start Listening
+              </button>
+              {nextAutoListenEvent.joinUrl && (
+                <a
+                  href={nextAutoListenEvent.joinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-5 py-3 rounded-2xl border border-white/20 bg-white/90 text-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-white transition"
                 >
-                  Start Listening
-                </button>
-                <button
-                  onClick={() => {
-                    setDismissedEventIds((prev) => Array.from(new Set([...prev, autoListenBannerId])));
-                    setAutoListenBannerId(null);
-                  }}
+                  Join Meeting
+                </a>
+              )}
+              <button
+                onClick={() => {
+                  setDismissedEventIds((prev) => Array.from(new Set([...prev, autoListenBannerId])));
+                  setAutoListenBannerId(null);
+                }}
                   className="px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-white/80 text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition"
                 >
                   Dismiss
@@ -1295,6 +1665,21 @@ const App: React.FC = () => {
               {isRecording ? `Recording • ${formatTime(recordingTime)}` : isProcessing ? "Processing…" : "Tap to start"}
             </p>
           </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => (shareMeetingAudio ? clearDisplayStream() : void handleShareMeetingAudio())}
+              className={`px-5 py-3 rounded-2xl border font-black text-[10px] uppercase tracking-widest transition ${
+                shareMeetingAudio
+                  ? "bg-white text-indigo-600 border-indigo-600"
+                  : "bg-transparent text-white border-white/50 hover:border-white"
+              }`}
+            >
+              {shareMeetingAudio ? "Stop sharing meeting" : "Share meeting audio"}
+            </button>
+            <span className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">
+              {shareMeetingAudio ? "Remote audio captured" : "Only mic audio recorded"}
+            </span>
+          </div>
 {/* RECORD + UPLOAD (SIDE BY SIDE) */}
 <div className="relative flex items-center justify-center gap-5">
   {/* MAIN RECORD CONTROL */}
@@ -1468,55 +1853,51 @@ const App: React.FC = () => {
                 ))}
               </ul>
 
-              <button
-                onClick={async () => {
-                  try {
-                    if (!selectedMeeting.summary) {
-                      showToast("No summary to recap", "info");
-                      return;
-                    }
+              <div className="space-y-3">
+                <button
+                  onClick={playRecap}
+                  disabled={recapLoading}
+                  className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all disabled:opacity-50"
+                >
+                  {recapLoading ? "Synthesizing..." : "Play AI Brief"}
+                </button>
 
-                    showToast("Synthesizing Neural Recap...", "info");
-                    const audioData = await generateAudioRecap(selectedMeeting.summary);
+                {recapAudioUrl && (
+                  <div className="flex flex-wrap gap-3 items-center">
+                    <button
+                      onClick={toggleRecapPlayback}
+                      className="px-4 py-2 rounded-2xl border border-slate-200 dark:border-white/10 font-black text-[10px] uppercase tracking-widest"
+                    >
+                      {isRecapPlaying ? "Pause" : "Play"}
+                    </button>
+                    <button
+                      onClick={() => seekRecap(-10)}
+                      className="px-4 py-2 rounded-2xl border border-slate-200 dark:border-white/10 font-black text-[10px] uppercase tracking-widest"
+                    >
+                      Rewind 10s
+                    </button>
+                    <button
+                      onClick={() => seekRecap(10)}
+                      className="px-4 py-2 rounded-2xl border border-slate-200 dark:border-white/10 font-black text-[10px] uppercase tracking-widest"
+                    >
+                      Forward 10s
+                    </button>
+                    <button
+                      onClick={stopRecapPlayback}
+                      className="px-4 py-2 rounded-2xl border border-slate-200 dark:border-white/10 font-black text-[10px] uppercase tracking-widest"
+                    >
+                      Stop
+                    </button>
+                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">
+                      {recapDuration
+                        ? `${formatTime(audioRef.current?.currentTime || 0)} / ${formatTime(recapDuration)}`
+                        : "Ready"}
+                    </span>
+                  </div>
+                )}
 
-                    if (!audioData) {
-                      showToast("No audio returned", "info");
-                      return;
-                    }
-
-                    // audioData should be base64 PCM16; keep your original decoder
-                    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-
-                    const decode = (base64: string) => {
-                      const binary = atob(base64);
-                      const bytes = new Uint8Array(binary.length);
-                      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-                      return bytes;
-                    };
-
-                    const decodePCM16ToBuffer = async (data: Uint8Array, ctx: AudioContext, rate: number) => {
-                      const int16 = new Int16Array(data.buffer);
-                      const buffer = ctx.createBuffer(1, int16.length, rate);
-                      const channel = buffer.getChannelData(0);
-                      for (let i = 0; i < int16.length; i++) channel[i] = int16[i] / 32768.0;
-                      return buffer;
-                    };
-
-                    const buffer = await decodePCM16ToBuffer(decode(audioData), audioCtx, 24000);
-                    const source = audioCtx.createBufferSource();
-                    source.buffer = buffer;
-                    source.connect(audioCtx.destination);
-                    source.start();
-
-                    showToast("Playing Neural Brief");
-                  } catch {
-                    showToast("Audio recap failed", "info");
-                  }
-                }}
-                className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all"
-              >
-                Play AI Brief
-              </button>
+                <audio ref={audioRef} className="sr-only" />
+              </div>
             </div>
 
             <div className="p-7 rounded-[2.5rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 space-y-3 shadow-lg">
@@ -1563,25 +1944,72 @@ const App: React.FC = () => {
             </p>
           </header>
 
+          <div className="space-y-6">
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] font-black uppercase tracking-[0.35em] text-indigo-500">Calendar connectors</p>
+              <p className="text-sm text-slate-300 font-bold">
+                Keep Auto-Listen armed by authorizing Google or Microsoft calendars. We only read upcoming meetings.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {calendarProviders.map((provider) => (
+                <div
+                  key={provider.id}
+                  className="p-8 rounded-[2.5rem] bg-slate-950 border border-white/5 shadow-[0_30px_60px_-30px_rgba(0,0,0,0.8)] space-y-5 flex flex-col justify-between"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="text-3xl">{provider.icon}</div>
+                        <h3 className="text-lg font-black text-white">{provider.name}</h3>
+                      </div>
+                      <span
+                        className={`text-[9px] font-black uppercase tracking-[0.35em] ${
+                          provider.connected ? "text-emerald-400" : "text-slate-500"
+                        }`}
+                      >
+                        {provider.connected ? "Connected" : "Disconnected"}
+                      </span>
+                    </div>
+                    <p className="text-slate-300 text-sm font-medium leading-relaxed">
+                      {provider.description}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => startOAuth(provider.id as "google" | "microsoft")}
+                    className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${
+                      provider.connected
+                        ? "bg-gradient-to-r from-slate-800 to-slate-950 text-white shadow-lg"
+                        : "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-xl hover:from-indigo-600 hover:to-purple-600"
+                    }`}
+                  >
+                    {provider.connected ? "Refresh connection" : "Connect"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {integrations.map((int) => (
               <div
                 key={int.id}
-                className="p-8 rounded-[2.5rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 space-y-5 shadow-xl relative group"
+                className="p-8 rounded-[2.5rem] bg-slate-950 border border-white/5 shadow-[0_40px_80px_-40px_rgba(0,0,0,0.9)] space-y-5 relative group"
               >
                 <div className="flex justify-between items-center">
                   <div className="text-3xl">{int.icon}</div>
                   <span
                     className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                      int.connected ? "bg-indigo-600 text-white" : "bg-slate-200 dark:bg-slate-800 text-slate-500"
+                      int.connected ? "bg-emerald-500 text-white" : "bg-slate-800 text-slate-400"
                     }`}
                   >
                     {int.connected ? "Connected" : "Available"}
                   </span>
                 </div>
 
-                <h3 className="text-xl font-black">{int.name}</h3>
-                <p className="text-slate-500 dark:text-slate-400 font-bold text-sm leading-relaxed">
+                <h3 className="text-xl font-black text-white">{int.name}</h3>
+                <p className="text-slate-300 font-bold text-sm leading-relaxed">
                   Link {int.name} to export future summaries and action items.
                 </p>
 
@@ -1591,7 +2019,9 @@ const App: React.FC = () => {
                     showToast(`${int.name} ${!int.connected ? "Linked" : "Unlinked"}`);
                   }}
                   className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${
-                    int.connected ? "bg-red-500 text-white shadow-lg" : "bg-indigo-600 text-white shadow-xl hover:bg-indigo-700"
+                    int.connected
+                      ? "bg-slate-900 text-white shadow-lg border border-white/10"
+                      : "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-xl hover:from-indigo-600 hover:to-purple-600"
                   }`}
                 >
                   {int.connected ? "Disconnect" : "Connect Link"}
@@ -1660,33 +2090,106 @@ const App: React.FC = () => {
       {/* ANALYTICS */}
       {view === "analytics" && (
         <div className="max-w-7xl mx-auto space-y-10">
-          <header className="space-y-3">
-            <h1 className="text-5xl md:text-7xl font-black tracking-tighter uppercase">Analytics.</h1>
-            <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Basic system metrics.</p>
-          </header>
-
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
-            {[
-              { label: "Meetings", value: String(meetings.length), sub: "Stored" },
-              { label: "Local", value: String(personalMeetings.length), sub: "Cache" },
-              { label: "Cloud", value: String(cloudMeetings.length), sub: "Synced" },
-              { label: "Mode", value: accentMode.toUpperCase(), sub: "Accent" },
-            ].map((m) => (
-              <div
-                key={m.label}
-                className="p-6 rounded-[2rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 space-y-2 shadow-lg"
-              >
-                <p className="text-[10px] font-black uppercase text-indigo-500 tracking-[0.2em]">{m.label}</p>
-                <p className="text-3xl font-black">{m.value}</p>
-                <p className="text-[10px] font-black uppercase text-slate-400 dark:text-slate-600 mt-1">{m.sub}</p>
-              </div>
-            ))}
+          <div className="overflow-hidden rounded-[3rem] bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border border-white/5 shadow-[0_60px_120px_-40px_rgba(15,23,42,0.95)] p-10 space-y-10">
+            <div className="space-y-3 max-w-2xl">
+              <p className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400">NEURAL INSIGHTS</p>
+              <h1 className="text-5xl md:text-7xl font-black uppercase tracking-tight text-white">Analytics.</h1>
+              <p className="text-slate-300 text-sm md:text-base">
+                Deep metrics for every transcript, summary, and auto-listen engagement. Refresh to pull the latest backend telemetry.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {[
+                { label: "Meetings", value: String(meetings.length), sub: "Stored locally" },
+                { label: "Local Cache", value: String(personalMeetings.length), sub: "Ready" },
+                { label: "Cloud Sync", value: String(cloudMeetings.length), sub: "Mirrored" },
+                { label: "Accent Mode", value: accentMode.toUpperCase(), sub: "Preference" },
+              ].map((summary) => (
+                <div
+                  key={summary.label}
+                  className="flex flex-col rounded-[2rem] bg-white/5 border border-white/5 p-6 backdrop-blur-3xl shadow-lg space-y-2"
+                >
+                  <p className="text-[10px] font-black uppercase tracking-[0.35em] text-slate-400">{summary.label}</p>
+                  <p className="text-4xl font-black text-white">{summary.value}</p>
+                  <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">{summary.sub}</p>
+                </div>
+              ))}
+            </div>
           </div>
-
-          <div className="p-8 rounded-[2.5rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 shadow-xl">
-            <p className="text-sm font-bold text-slate-600 dark:text-slate-400">
-              Tip: Once your backend is stable, log durations, error rates, and inference times from the server for real analytics.
-            </p>
+          <div className="space-y-6">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-500">Backend telemetry</p>
+                <h2 className="text-3xl font-black text-white">Gemini & Auto-Listen</h2>
+              </div>
+              <button
+                onClick={() => fetchAnalytics()}
+                className="px-5 py-2 rounded-full border border-indigo-500 text-indigo-500 text-[10px] font-black uppercase tracking-[0.35em] transition hover:bg-indigo-500 hover:text-white"
+              >
+                Refresh
+              </button>
+            </div>
+            {analyticsLoading ? (
+              <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-xl">
+                <p className="text-sm font-black text-slate-400">Loading backend metrics…</p>
+              </div>
+            ) : analyticsError ? (
+              <div className="rounded-[2rem] border border-red-400/40 bg-red-500/10 p-6 shadow-xl">
+                <p className="text-sm font-black text-red-400">Error: {analyticsError}</p>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                  {analyticsMetricList.map((metric) => {
+                    const stats = analyticsMetrics?.endpoints?.[metric.key];
+                    return (
+                      <div
+                        key={metric.key}
+                        className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-xl space-y-2 backdrop-blur-3xl"
+                      >
+                        <p className="text-[10px] font-black uppercase tracking-[0.35em] text-slate-400">{metric.label}</p>
+                        <p className="text-3xl font-black text-white">{stats?.count ?? 0}</p>
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">
+                          Avg {stats?.averageDurationMs ?? "—"} ms • {stats?.errors ?? 0} errors
+                        </p>
+                        <div className="h-2 rounded-full bg-white/10">
+                          <div
+                            className={`h-full rounded-full bg-gradient-to-r ${metric.accent}`}
+                            style={{ width: `${Math.min(stats?.errorRate ?? 0, 100)}%` }}
+                          />
+                        </div>
+                        {stats?.lastError && (
+                          <p className="text-[9px] uppercase tracking-[0.35em] text-rose-400">Last error logged</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  <div className="rounded-[2rem] border border-white/10 bg-gradient-to-br from-indigo-600/40 to-purple-600/30 p-6 shadow-2xl space-y-2">
+                    <p className="text-[10px] font-black uppercase tracking-[0.35em] text-indigo-100">Calendar syncs</p>
+                    <p className="text-4xl font-black text-white">{analyticsMetrics?.autoListen.calendarSyncs ?? 0}</p>
+                    <p className="text-[10px] uppercase tracking-[0.35em] text-white/70">
+                      Errors: {analyticsMetrics?.autoListen.calendarErrors ?? 0}
+                    </p>
+                  </div>
+                  <div className="rounded-[2rem] border border-white/10 bg-gradient-to-br from-emerald-500/40 to-lime-500/30 p-6 shadow-2xl space-y-2">
+                    <p className="text-[10px] font-black uppercase tracking-[0.35em] text-emerald-100">Auto-listen tweaks</p>
+                    <p className="text-4xl font-black text-white">{analyticsMetrics?.autoListen.toggles ?? 0}</p>
+                    <p className="text-[10px] uppercase tracking-[0.35em] text-white/80">
+                      Last saved: {analyticsMetrics?.autoListen.lastUpdated ? new Date(analyticsMetrics.autoListen.lastUpdated).toLocaleString() : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-[2rem] border border-white/10 bg-gradient-to-br from-slate-800/80 to-slate-900 p-6 shadow-2xl space-y-2">
+                    <p className="text-[10px] font-black uppercase tracking-[0.35em] text-slate-200">Heartbeat</p>
+                    <p className="text-4xl font-black text-white">{analyticsMetrics?.timestamp ? "Live" : "Idle"}</p>
+                    <p className="text-[10px] uppercase tracking-[0.35em] text-white/70">
+                      {analyticsMetrics?.timestamp ? new Date(analyticsMetrics.timestamp).toLocaleTimeString() : "No data yet"}
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

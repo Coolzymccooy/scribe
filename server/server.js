@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import fs from 'fs/promises';
+import path from 'path';
 import {
   transcribeAudio,
   analyzeMeeting,
@@ -21,7 +23,6 @@ dotenv.config();
  * and CORS_ORIGINS in your environment. When deploying to Render,
  * configure these as environment variables in the service settings.
  */
-
 
 // 2️⃣ DEBUG CHECK (paste THIS right here)
 console.log("ENV loaded:", { 
@@ -85,8 +86,53 @@ const tokenStore = {
 
 const autoListenStore = {
   enabled: false,
-  leadMinutes: 1,
-  providers: [],
+  leadMinutes: 2,
+  providers: ['google', 'microsoft'],
+};
+
+const createAnalyticsStore = () => ({
+  endpoints: {},
+  autoListen: {
+    toggles: 0,
+    calendarSyncs: 0,
+    calendarErrors: 0,
+    lastUpdated: null,
+  },
+});
+
+const analyticsStore = createAnalyticsStore();
+
+const recordEndpointMetric = (name, durationMs, success, error) => {
+  if (!analyticsStore.endpoints[name]) {
+    analyticsStore.endpoints[name] = { count: 0, totalDurationMs: 0, errors: 0, lastError: null };
+  }
+  const entry = analyticsStore.endpoints[name];
+  entry.count += 1;
+  entry.totalDurationMs += durationMs;
+  if (!success) {
+    entry.errors += 1;
+    entry.lastError = error?.message || String(error || 'unknown error');
+  }
+  scheduleAnalyticsPersist();
+};
+
+const buildAnalyticsResponse = () => {
+  const endpoints = {};
+  Object.entries(analyticsStore.endpoints).forEach(([key, value]) => {
+    endpoints[key] = {
+      count: value.count,
+      averageDurationMs: value.count ? Math.round(value.totalDurationMs / value.count) : 0,
+      errors: value.errors,
+      errorRate: value.count ? Number(((value.errors / value.count) * 100).toFixed(1)) : 0,
+      lastError: value.lastError,
+    };
+  });
+
+  return {
+    endpoints,
+    autoListen: analyticsStore.autoListen,
+    timestamp: Date.now(),
+  };
 };
 
 const nowMs = () => Date.now();
@@ -98,6 +144,67 @@ const requireEnv = (keys) => {
 };
 
 const getBaseAppUrl = () => (process.env.APP_BASE_URL || '').replace(/\/$/, '');
+
+const STATE_FILE_PATH = path.resolve(process.cwd(), process.env.STATE_FILE_PATH || 'state.json');
+
+const ensureStateDir = async () => {
+  await fs.mkdir(path.dirname(STATE_FILE_PATH), { recursive: true });
+};
+
+const persistState = async () => {
+  const payload = {
+    tokenStore,
+    autoListenStore,
+    analyticsStore,
+  };
+  await ensureStateDir();
+  await fs.writeFile(STATE_FILE_PATH, JSON.stringify(payload, null, 2));
+};
+
+const persistStateSilently = () => {
+  persistState().catch((err) => console.error('STATE PERSIST ERROR:', err));
+};
+
+const loadPersistentState = async () => {
+  try {
+    const raw = await fs.readFile(STATE_FILE_PATH, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const applySavedState = (saved) => {
+  if (!saved) return;
+  if (saved.tokenStore) {
+    tokenStore.microsoft = saved.tokenStore.microsoft ?? tokenStore.microsoft;
+    tokenStore.google = saved.tokenStore.google ?? tokenStore.google;
+  }
+  if (saved.autoListenStore) {
+    autoListenStore.enabled = saved.autoListenStore.enabled ?? autoListenStore.enabled;
+    autoListenStore.leadMinutes = saved.autoListenStore.leadMinutes ?? autoListenStore.leadMinutes;
+    autoListenStore.providers = Array.isArray(saved.autoListenStore.providers)
+      ? saved.autoListenStore.providers
+      : autoListenStore.providers;
+  }
+  if (saved.analyticsStore) {
+    analyticsStore.endpoints = saved.analyticsStore.endpoints || analyticsStore.endpoints;
+    analyticsStore.autoListen = { ...analyticsStore.autoListen, ...saved.analyticsStore.autoListen };
+  }
+};
+
+let analyticsDirty = false;
+let analyticsSaveTimer = null;
+
+const scheduleAnalyticsPersist = () => {
+  analyticsDirty = true;
+  if (analyticsSaveTimer) return;
+  analyticsSaveTimer = setTimeout(() => {
+    persistStateSilently();
+    analyticsDirty = false;
+    analyticsSaveTimer = null;
+  }, 3000);
+};
 
 const buildMicrosoftAuthUrl = () => {
   const clientId = process.env.MICROSOFT_CLIENT_ID;
@@ -148,6 +255,8 @@ const exchangeMicrosoftCode = async (code) => {
     expires_at: nowMs() + expiresIn - 60_000, // subtract 60s safety
   };
 
+  persistStateSilently();
+
   return tokenStore.microsoft;
 };
 
@@ -181,6 +290,8 @@ const refreshMicrosoft = async () => {
     refresh_token: json.refresh_token || tokenStore.microsoft.refresh_token,
     expires_at: nowMs() + expiresIn - 60_000,
   };
+
+  persistStateSilently();
 
   return tokenStore.microsoft;
 };
@@ -230,6 +341,8 @@ const exchangeGoogleCode = async (code) => {
     expires_at: nowMs() + expiresIn - 60_000,
   };
 
+  persistStateSilently();
+
   return tokenStore.google;
 };
 
@@ -255,6 +368,8 @@ const refreshGoogle = async () => {
     refresh_token: tokenStore.google.refresh_token,
     expires_at: nowMs() + expiresIn - 60_000,
   };
+
+  persistStateSilently();
 
   return tokenStore.google;
 };
@@ -317,6 +432,11 @@ app.get('/api/auth/google/callback', async (req, res) => {
 
 // ---- Calendar endpoints ----
 app.get('/api/calendar/upcoming', async (req, res) => {
+  const timer = Date.now();
+  analyticsStore.autoListen.calendarSyncs += 1;
+  analyticsStore.autoListen.lastUpdated = new Date().toISOString();
+  scheduleAnalyticsPersist();
+
   try {
     const provider = String(req.query.provider || '').toLowerCase();
     const horizonMinutes = Number(req.query.horizonMinutes || 240); // default: next 4h
@@ -349,8 +469,8 @@ app.get('/api/calendar/upcoming', async (req, res) => {
               id: `ms_${it.id}`,
               provider: 'microsoft',
               title: it.subject || 'Meeting',
-              start: it.start?.dateTime || it.start?.date || null,
-              end: it.end?.dateTime || it.end?.date || null,
+              startTime: it.start?.dateTime || it.start?.date || null,
+              endTime: it.end?.dateTime || it.end?.date || null,
               joinUrl: it.onlineMeetingUrl || it.onlineMeeting?.joinUrl || null,
             });
           }
@@ -379,9 +499,10 @@ app.get('/api/calendar/upcoming', async (req, res) => {
               id: `g_${it.id}`,
               provider: 'google',
               title: it.summary || 'Meeting',
-              start: it.start?.dateTime || it.start?.date || null,
-              end: it.end?.dateTime || it.end?.date || null,
-              joinUrl: it.hangoutLink || (it.conferenceData?.entryPoints || []).find((x) => x.uri)?.uri || null,
+              startTime: it.start?.dateTime || it.start?.date || null,
+              endTime: it.end?.dateTime || it.end?.date || null,
+              joinUrl:
+                it.hangoutLink || (it.conferenceData?.entryPoints || []).find((x) => x.uri)?.uri || null,
             });
           }
         }
@@ -389,11 +510,20 @@ app.get('/api/calendar/upcoming', async (req, res) => {
     }
 
     // Sort by start time if available
-    events.sort((a, b) => String(a.start || '').localeCompare(String(b.start || '')));
+    events.sort((a, b) => String(a.startTime || '').localeCompare(String(b.startTime || '')));
 
-    res.json({ events, connected: { microsoft: Boolean(tokenStore.microsoft), google: Boolean(tokenStore.google) }, autoListen: autoListenStore });
+    recordEndpointMetric('calendarUpcoming', Date.now() - timer, true);
+    res.json({
+      events,
+      connected: { microsoft: Boolean(tokenStore.microsoft), google: Boolean(tokenStore.google) },
+      autoListen: autoListenStore,
+    });
   } catch (err) {
+    analyticsStore.autoListen.calendarErrors += 1;
+    analyticsStore.autoListen.lastUpdated = new Date().toISOString();
+    scheduleAnalyticsPersist();
     console.error('CALENDAR UPCOMING ERROR:', err);
+    recordEndpointMetric('calendarUpcoming', Date.now() - timer, false, err);
     res.status(500).json({ error: 'Calendar upcoming failed', details: err?.message || String(err) });
   }
 });
@@ -410,81 +540,118 @@ app.post('/api/calendar/sync-now', async (req, res) => {
 });
 
 // ---- Auto listen settings ----
-app.post('/api/auto-listen/settings', (req, res) => {
+app.post('/api/auto-listen/settings', async (req, res) => {
+  const start = Date.now();
   try {
     const { enabled, leadMinutes, providers } = req.body || {};
     if (typeof enabled === 'boolean') autoListenStore.enabled = enabled;
     if (typeof leadMinutes === 'number' && Number.isFinite(leadMinutes)) autoListenStore.leadMinutes = Math.max(0, leadMinutes);
     if (Array.isArray(providers)) autoListenStore.providers = providers.map((x) => String(x).toLowerCase());
+
+    analyticsStore.autoListen.toggles += 1;
+    analyticsStore.autoListen.lastUpdated = new Date().toISOString();
+    scheduleAnalyticsPersist();
+
+    persistStateSilently();
+    recordEndpointMetric('autoListenSettings', Date.now() - start, true);
     res.json({ ok: true, settings: autoListenStore });
   } catch (err) {
+    analyticsStore.autoListen.lastUpdated = new Date().toISOString();
+    recordEndpointMetric('autoListenSettings', Date.now() - start, false, err);
     res.status(500).json({ error: 'Auto-listen settings failed', details: err?.message || String(err) });
+  }
+});
+
+app.get('/api/analytics', (req, res) => {
+  try {
+    res.json(buildAnalyticsResponse());
+  } catch (err) {
+    console.error('ANALYTICS FETCH ERROR:', err);
+    res.status(500).json({ error: 'Failed to read analytics', details: String(err) });
   }
 });
 
 // 3️⃣ API ROUTES
 app.post('/api/transcribe', async (req, res) => {
+  const timer = Date.now();
   try {
     const { audio, mimeType, accent } = req.body;
     const transcript = await transcribeAudio(audio, mimeType, accent);
+    recordEndpointMetric('transcribe', Date.now() - timer, true);
     res.json({ transcript });
   } catch (err) {
     console.error(err);
+    recordEndpointMetric('transcribe', Date.now() - timer, false, err);
     res.status(500).json({ error: 'Error during transcription' });
   }
 });
 
 app.post('/api/analyze', async (req, res) => {
+  const timer = Date.now();
   try {
     const { transcript, type, accent } = req.body;
     const summary = await analyzeMeeting(transcript, type, accent);
+    recordEndpointMetric('analyze', Date.now() - timer, true);
     res.json({ summary });
   } catch (err) {
     console.error(err);
+    recordEndpointMetric('analyze', Date.now() - timer, false, err);
     res.status(500).json({ error: 'Error during analysis' });
   }
 });
 
 app.post('/api/ask', async (req, res) => {
+  const timer = Date.now();
   try {
     const { meeting, question, history } = req.body;
     const answer = await askTranscript(meeting, question, history);
+    recordEndpointMetric('ask', Date.now() - timer, true);
     res.json({ answer });
   } catch (err) {
     console.error(err);
+    recordEndpointMetric('ask', Date.now() - timer, false, err);
     res.status(500).json({ error: 'Error answering question' });
   }
 });
 
 app.post('/api/draft-email', async (req, res) => {
+  const timer = Date.now();
   try {
     const { meeting } = req.body;
     const email = await generateEmailDraft(meeting);
+    recordEndpointMetric('draftEmail', Date.now() - timer, true);
     res.json({ email });
   } catch (err) {
     console.error(err);
+    recordEndpointMetric('draftEmail', Date.now() - timer, false, err);
     res.status(500).json({ error: 'Error generating email draft' });
   }
 });
 
 app.post('/api/audio-recap', async (req, res) => {
+  const timer = Date.now();
   try {
     const { summary } = req.body;
     const audio = await generateAudioRecap(summary);
+    recordEndpointMetric('audioRecap', Date.now() - timer, true);
     res.json({ audio });
   } catch (err) {
     console.error(err);
+    recordEndpointMetric('audioRecap', Date.now() - timer, false, err);
     res.status(500).json({ error: 'Error generating audio recap' });
   }
 });
 
 app.post('/api/support', async (req, res) => {
+  const timer = Date.now();
   try {
     const { question, history } = req.body;
     const answer = await askSupport(question, history);
+    recordEndpointMetric('support', Date.now() - timer, true);
     res.json({ answer });
   } catch (err) {
     console.error("SUPPORT ERROR:", err);
+    recordEndpointMetric('support', Date.now() - timer, false, err);
     res.status(500).json({
       error: "Support failed",
       details: err?.message || String(err),
@@ -495,6 +662,17 @@ app.post('/api/support', async (req, res) => {
 });
 
 
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-});
+const startServer = async () => {
+  try {
+    const saved = await loadPersistentState();
+    applySavedState(saved);
+  } catch (err) {
+    console.error('Failed to hydrate saved state:', err);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
+  });
+};
+
+startServer();

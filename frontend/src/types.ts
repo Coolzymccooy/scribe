@@ -41,6 +41,9 @@ export interface CalendarEvent {
   id: string;
   title: string;
   startTime: string; // ISO
+  endTime?: string;
+  joinUrl?: string;
+  provider?: string;
   type: MeetingType;
 }
 
@@ -75,3 +78,22 @@ export type ViewState =
   | "integrations"
   | "analytics"
   | "help";
+
+export interface AnalyticsEndpointStats {
+  count: number;
+  averageDurationMs: number;
+  errors: number;
+  errorRate: number;
+  lastError?: string;
+}
+
+export interface AnalyticsPayload {
+  endpoints: Record<string, AnalyticsEndpointStats>;
+  autoListen: {
+    toggles: number;
+    calendarSyncs: number;
+    calendarErrors: number;
+    lastUpdated: string | null;
+  };
+  timestamp?: number;
+}

@@ -1086,8 +1086,16 @@ const App: React.FC = () => {
       // 1. Get Mic Permission FIRST (Critical)
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // 2. Request Wake Lock (Non-blocking / Optional)
-      requestWakeLock().catch(e => console.warn("Wake lock failed", e));
+      // 2. Request Wake Lock (Non-blocking)
+      try {
+         // @ts-ignore
+         if ('wakeLock' in navigator) {
+             const lock = await navigator.wakeLock.request('screen');
+             console.log("Wake Lock acquired");
+         }
+      } catch (e) {
+         console.warn("Wake lock failed (ignoring):", e);
+      }
 
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = ctx;
@@ -1111,14 +1119,18 @@ const App: React.FC = () => {
         }
       }
 
-      // --- START BACKGROUND HACK ---
-      const dummyOsc = ctx.createOscillator();
-      const dummyGain = ctx.createGain();
-      dummyGain.gain.value = 0.001; 
-      dummyOsc.connect(dummyGain);
-      dummyGain.connect(ctx.destination); 
-      dummyOsc.start();
-      (ctx as any)._dummyOsc = dummyOsc;
+      // --- START BACKGROUND HACK (FAIL-SAFE) ---
+      try {
+        const dummyOsc = ctx.createOscillator();
+        const dummyGain = ctx.createGain();
+        dummyGain.gain.value = 0.001; 
+        dummyOsc.connect(dummyGain);
+        dummyGain.connect(ctx.destination); 
+        dummyOsc.start();
+        (ctx as any)._dummyOsc = dummyOsc;
+      } catch (err) {
+        console.warn("Background audio hack failed (ignoring)", err);
+      }
       // --- END BACKGROUND HACK ---
 
       const analyser = ctx.createAnalyser();
@@ -1138,7 +1150,6 @@ const App: React.FC = () => {
       mediaRecorder.ondataavailable = async (e) => {
         if (e.data && e.data.size > 0) {
            audioChunksRef.current.push(e.data);
-           // AUTO-SAVE: Persist chunk to IndexedDB immediately
            try {
              await appendAudioChunk(newSessionId, e.data);
            } catch (err) {
@@ -1152,15 +1163,13 @@ const App: React.FC = () => {
         setIsRecording(true);
       };
 
-      // Request data every 5 seconds to trigger ondataavailable and auto-save
       mediaRecorder.start(5000); 
       showToast("Neural Capture (Auto-Save Active)", "info");
     } catch (err: any) {
       console.error("Recording Start Error:", err);
-      // Show the REAL error message
       alert(`Could not start recording: ${err.message || err.name || "Unknown Error"}`);
     }
-  }, [shareMeetingAudio, displayStream, requestWakeLock, showToast]);
+  }, [shareMeetingAudio, displayStream, showToast]);
 
   const stopRecording = useCallback(async () => {
     const recorder = mediaRecorderRef.current;

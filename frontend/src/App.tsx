@@ -669,6 +669,37 @@ const App: React.FC = () => {
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "info" } | null>(null);
 
+  // Crash Recovery State
+  const [unfinishedSessions, setUnfinishedSessions] = useState<string[]>([]);
+
+  useEffect(() => {
+    listUnfinishedSessions().then(setUnfinishedSessions);
+  }, []);
+
+  const recoverSession = async (sessionId: string) => {
+    try {
+      const chunks = await getAudioChunks(sessionId);
+      if (!chunks || chunks.length === 0) {
+        showToast("Session data corrupted or empty", "info");
+        await clearAudioChunks(sessionId);
+        setUnfinishedSessions(prev => prev.filter(id => id !== sessionId));
+        return;
+      }
+      
+      const blob = new Blob(chunks, { type: "audio/webm" });
+      // Treat as uploaded file for processing
+      await handleUploadAudio(new File([blob], `Recovered_${sessionId}.webm`, { type: "audio/webm" }));
+      
+      // Cleanup
+      await clearAudioChunks(sessionId);
+      setUnfinishedSessions(prev => prev.filter(id => id !== sessionId));
+      showToast("Session recovered successfully", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Recovery failed", "info");
+    }
+  };
+
   const { requestWakeLock, releaseWakeLock } = useWakeLock();
 
   // Modals & details
@@ -1430,6 +1461,23 @@ const App: React.FC = () => {
             <p className="text-base sm:text-lg md:text-xl font-bold text-slate-400 max-w-2xl mx-auto px-2 sm:px-4 leading-relaxed">
               Local-first recording + server-side AI processing. Responsive workspace built for mobile, tablet, and desktop.
             </p>
+            
+            {/* RECOVERY BANNER */}
+            {unfinishedSessions.length > 0 && (
+              <div className="max-w-md mx-auto bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl flex items-center justify-between gap-4">
+                <div className="text-left">
+                  <div className="text-amber-500 font-black text-xs uppercase tracking-widest">Crash Detected</div>
+                  <div className="text-slate-300 text-xs mt-1">Found {unfinishedSessions.length} unfinished recording(s).</div>
+                </div>
+                <button 
+                  onClick={() => recoverSession(unfinishedSessions[0])}
+                  className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wide transition"
+                >
+                  Recover
+                </button>
+              </div>
+            )}
+            
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <button
                 onClick={() => setView("dashboard")}

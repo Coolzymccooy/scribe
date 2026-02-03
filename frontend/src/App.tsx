@@ -1045,32 +1045,45 @@ const App: React.FC = () => {
     try {
       await requestWakeLock(); // Request Screen Wake Lock
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-      const recordingStream =
-        shareMeetingAudio && displayStream
-          ? new MediaStream([...stream.getAudioTracks(), ...displayStream.getAudioTracks()])
-          : stream;
-
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = ctx;
 
+      // 1. Create the Destination (The single mixed stream we will record)
+      const destination = ctx.createMediaStreamDestination();
+
+      // 2. Add Microphone to Mix
+      const micSource = ctx.createMediaStreamSource(micStream);
+      micSource.connect(destination);
+
+      // 3. Add System Audio to Mix (if shared)
+      if (shareMeetingAudio && displayStream) {
+        // Note: displayStream might have video, but we only want audio for the mixer
+        if (displayStream.getAudioTracks().length > 0) {
+           const systemSource = ctx.createMediaStreamSource(displayStream);
+           systemSource.connect(destination);
+        }
+      }
+
       // --- START BACKGROUND HACK ---
-      // Create a silent oscillator to prevent browser throttling in background tabs
+      // Create a silent oscillator to prevent browser throttling
       const dummyOsc = ctx.createOscillator();
       const dummyGain = ctx.createGain();
-      dummyGain.gain.value = 0.001; // Tiny gain to keep audio engine active
+      dummyGain.gain.value = 0.001; 
       dummyOsc.connect(dummyGain);
-      dummyGain.connect(ctx.destination);
+      dummyGain.connect(ctx.destination); // Connect to hardware output (speakers) to keep context running
       dummyOsc.start();
       (ctx as any)._dummyOsc = dummyOsc;
       // --- END BACKGROUND HACK ---
 
-      const source = ctx.createMediaStreamSource(stream);
+      // Visualizer gets the FINAL MIX
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
-      source.connect(analyser);
+      destination.connect(analyser);
+
+      // Recorder gets the FINAL MIX
+      const recordingStream = destination.stream;
 
       const mediaRecorder = new MediaRecorder(recordingStream);
       mediaRecorderRef.current = mediaRecorder;

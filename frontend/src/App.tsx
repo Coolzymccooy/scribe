@@ -34,7 +34,14 @@ import {
 
 import { useWakeLock } from "./hooks/useWakeLock";
 
-import { saveAudioBlob, getAudioBlob } from "./services/storageService";
+import {
+  saveAudioBlob,
+  getAudioBlob,
+  appendAudioChunk,
+  clearAudioChunks,
+  listUnfinishedSessions,
+  getAudioChunks
+} from "./services/storageService";
 
 /** -----------------------------
  * Small UI helpers
@@ -1041,6 +1048,8 @@ const App: React.FC = () => {
     }
   };
 
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+
   const startRecording = useCallback(async () => {
     try {
       await requestWakeLock(); // Request Screen Wake Lock
@@ -1066,31 +1075,39 @@ const App: React.FC = () => {
       }
 
       // --- START BACKGROUND HACK ---
-      // Create a silent oscillator to prevent browser throttling
       const dummyOsc = ctx.createOscillator();
       const dummyGain = ctx.createGain();
       dummyGain.gain.value = 0.001; 
       dummyOsc.connect(dummyGain);
-      dummyGain.connect(ctx.destination); // Connect to hardware output (speakers) to keep context running
+      dummyGain.connect(ctx.destination); 
       dummyOsc.start();
       (ctx as any)._dummyOsc = dummyOsc;
       // --- END BACKGROUND HACK ---
 
-      // Visualizer gets the FINAL MIX
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
       destination.connect(analyser);
 
-      // Recorder gets the FINAL MIX
       const recordingStream = destination.stream;
-
       const mediaRecorder = new MediaRecorder(recordingStream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
+      
+      // AUTO-SAVE: Generate a Session ID
+      const newSessionId = `session_${Date.now()}`;
+      setCurrentSessionId(newSessionId);
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+      mediaRecorder.ondataavailable = async (e) => {
+        if (e.data && e.data.size > 0) {
+           audioChunksRef.current.push(e.data);
+           // AUTO-SAVE: Persist chunk to IndexedDB immediately
+           try {
+             await appendAudioChunk(newSessionId, e.data);
+           } catch (err) {
+             console.error("Auto-save failed", err);
+           }
+        }
       };
 
       mediaRecorder.onstart = () => {
@@ -1098,8 +1115,9 @@ const App: React.FC = () => {
         setIsRecording(true);
       };
 
-      mediaRecorder.start();
-      showToast("Neural Capture Mode Engaged (Background Safe)", "info");
+      // Request data every 5 seconds to trigger ondataavailable and auto-save
+      mediaRecorder.start(5000); 
+      showToast("Neural Capture (Auto-Save Active)", "info");
     } catch {
       alert("Microphone access is required for ScribeAI.");
     }
@@ -1116,6 +1134,12 @@ const App: React.FC = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         const storageKey = `audio_${Date.now()}`;
         await saveAudioBlob(storageKey, audioBlob);
+
+        // AUTO-SAVE CLEANUP: If successful, clear temp chunks
+        if (currentSessionId) {
+          await clearAudioChunks(currentSessionId);
+          setCurrentSessionId(null);
+        }
 
         const base64Audio = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();

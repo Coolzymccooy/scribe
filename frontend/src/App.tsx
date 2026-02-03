@@ -1112,7 +1112,8 @@ const App: React.FC = () => {
         try {
           if (displayStream.getAudioTracks().length > 0) {
              const systemSource = ctx.createMediaStreamSource(displayStream);
-             systemSource.connect(destination);
+             systemSource.connect(destination); // To Recorder
+             // systemSource.connect(analyser); // Optional: if you want to visualize system audio too
           }
         } catch (err) {
           console.warn("Could not mix system audio", err);
@@ -1136,7 +1137,9 @@ const App: React.FC = () => {
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
-      destination.connect(analyser);
+      
+      // FIX: Connect SOURCE to Analyser, NOT the Destination node
+      micSource.connect(analyser); 
 
       const recordingStream = destination.stream;
       const mediaRecorder = new MediaRecorder(recordingStream);

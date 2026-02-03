@@ -32,7 +32,16 @@ import {
   askSupport,
 } from "./services/apiService";
 
-import { saveAudioBlob, getAudioBlob } from "./services/storageService";
+import { useWakeLock } from "./hooks/useWakeLock";
+
+import {
+  saveAudioBlob,
+  getAudioBlob,
+  appendAudioChunk,
+  clearAudioChunks,
+  listUnfinishedSessions,
+  getAudioChunks
+} from "./services/storageService";
 
 /** -----------------------------
  * Small UI helpers
@@ -660,6 +669,39 @@ const App: React.FC = () => {
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "info" } | null>(null);
 
+  // Crash Recovery State
+  const [unfinishedSessions, setUnfinishedSessions] = useState<string[]>([]);
+
+  useEffect(() => {
+    listUnfinishedSessions().then(setUnfinishedSessions);
+  }, []);
+
+  const recoverSession = async (sessionId: string) => {
+    try {
+      const chunks = await getAudioChunks(sessionId);
+      if (!chunks || chunks.length === 0) {
+        showToast("Session data corrupted or empty", "info");
+        await clearAudioChunks(sessionId);
+        setUnfinishedSessions(prev => prev.filter(id => id !== sessionId));
+        return;
+      }
+      
+      const blob = new Blob(chunks, { type: "audio/webm" });
+      // Treat as uploaded file for processing
+      await handleUploadAudio(new File([blob], `Recovered_${sessionId}.webm`, { type: "audio/webm" }));
+      
+      // Cleanup
+      await clearAudioChunks(sessionId);
+      setUnfinishedSessions(prev => prev.filter(id => id !== sessionId));
+      showToast("Session recovered successfully", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Recovery failed", "info");
+    }
+  };
+
+  const { requestWakeLock, releaseWakeLock } = useWakeLock();
+
   // Modals & details
   const [activeArticle, setActiveArticle] = useState<{ title: string; content: string } | null>(null);
   const [enterpriseDetail, setEnterpriseDetail] = useState<{
@@ -1037,30 +1079,66 @@ const App: React.FC = () => {
     }
   };
 
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+
   const startRecording = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      await requestWakeLock(); // Request Screen Wake Lock
 
-      const recordingStream =
-        shareMeetingAudio && displayStream
-          ? new MediaStream([...stream.getAudioTracks(), ...displayStream.getAudioTracks()])
-          : stream;
-
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = ctx;
 
-      const source = ctx.createMediaStreamSource(stream);
+      // 1. Create the Destination (The single mixed stream we will record)
+      const destination = ctx.createMediaStreamDestination();
+
+      // 2. Add Microphone to Mix
+      const micSource = ctx.createMediaStreamSource(micStream);
+      micSource.connect(destination);
+
+      // 3. Add System Audio to Mix (if shared)
+      if (shareMeetingAudio && displayStream) {
+        // Note: displayStream might have video, but we only want audio for the mixer
+        if (displayStream.getAudioTracks().length > 0) {
+           const systemSource = ctx.createMediaStreamSource(displayStream);
+           systemSource.connect(destination);
+        }
+      }
+
+      // --- START BACKGROUND HACK ---
+      const dummyOsc = ctx.createOscillator();
+      const dummyGain = ctx.createGain();
+      dummyGain.gain.value = 0.001; 
+      dummyOsc.connect(dummyGain);
+      dummyGain.connect(ctx.destination); 
+      dummyOsc.start();
+      (ctx as any)._dummyOsc = dummyOsc;
+      // --- END BACKGROUND HACK ---
+
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
-      source.connect(analyser);
+      destination.connect(analyser);
 
+      const recordingStream = destination.stream;
       const mediaRecorder = new MediaRecorder(recordingStream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
+      
+      // AUTO-SAVE: Generate a Session ID
+      const newSessionId = `session_${Date.now()}`;
+      setCurrentSessionId(newSessionId);
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+      mediaRecorder.ondataavailable = async (e) => {
+        if (e.data && e.data.size > 0) {
+           audioChunksRef.current.push(e.data);
+           // AUTO-SAVE: Persist chunk to IndexedDB immediately
+           try {
+             await appendAudioChunk(newSessionId, e.data);
+           } catch (err) {
+             console.error("Auto-save failed", err);
+           }
+        }
       };
 
       mediaRecorder.onstart = () => {
@@ -1068,12 +1146,13 @@ const App: React.FC = () => {
         setIsRecording(true);
       };
 
-      mediaRecorder.start();
-      showToast("Neural Capture Mode Engaged", "info");
+      // Request data every 5 seconds to trigger ondataavailable and auto-save
+      mediaRecorder.start(5000); 
+      showToast("Neural Capture (Auto-Save Active)", "info");
     } catch {
       alert("Microphone access is required for ScribeAI.");
     }
-  }, [shareMeetingAudio, displayStream]);
+  }, [shareMeetingAudio, displayStream, requestWakeLock, showToast]);
 
   const stopRecording = useCallback(async () => {
     const recorder = mediaRecorderRef.current;
@@ -1086,6 +1165,12 @@ const App: React.FC = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
         const storageKey = `audio_${Date.now()}`;
         await saveAudioBlob(storageKey, audioBlob);
+
+        // AUTO-SAVE CLEANUP: If successful, clear temp chunks
+        if (currentSessionId) {
+          await clearAudioChunks(currentSessionId);
+          setCurrentSessionId(null);
+        }
 
         const base64Audio = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -1148,7 +1233,12 @@ const App: React.FC = () => {
         setIsProcessing(false);
         setIsRecording(false);
 
+        // CLEANUP: Release Wake Lock and Stop Oscillator
         try {
+          await releaseWakeLock();
+          if (audioContextRef.current && (audioContextRef.current as any)._dummyOsc) {
+            try { (audioContextRef.current as any)._dummyOsc.stop(); } catch {}
+          }
           audioContextRef.current?.close();
         } catch {
           // ignore
@@ -1371,6 +1461,23 @@ const App: React.FC = () => {
             <p className="text-base sm:text-lg md:text-xl font-bold text-slate-400 max-w-2xl mx-auto px-2 sm:px-4 leading-relaxed">
               Local-first recording + server-side AI processing. Responsive workspace built for mobile, tablet, and desktop.
             </p>
+            
+            {/* RECOVERY BANNER */}
+            {unfinishedSessions.length > 0 && (
+              <div className="max-w-md mx-auto bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl flex items-center justify-between gap-4">
+                <div className="text-left">
+                  <div className="text-amber-500 font-black text-xs uppercase tracking-widest">Crash Detected</div>
+                  <div className="text-slate-300 text-xs mt-1">Found {unfinishedSessions.length} unfinished recording(s).</div>
+                </div>
+                <button 
+                  onClick={() => recoverSession(unfinishedSessions[0])}
+                  className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wide transition"
+                >
+                  Recover
+                </button>
+              </div>
+            )}
+            
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <button
                 onClick={() => setView("dashboard")}

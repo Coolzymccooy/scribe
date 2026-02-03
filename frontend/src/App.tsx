@@ -32,6 +32,8 @@ import {
   askSupport,
 } from "./services/apiService";
 
+import { useWakeLock } from "./hooks/useWakeLock";
+
 import { saveAudioBlob, getAudioBlob } from "./services/storageService";
 
 /** -----------------------------
@@ -660,6 +662,8 @@ const App: React.FC = () => {
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "info" } | null>(null);
 
+  const { requestWakeLock, releaseWakeLock } = useWakeLock();
+
   // Modals & details
   const [activeArticle, setActiveArticle] = useState<{ title: string; content: string } | null>(null);
   const [enterpriseDetail, setEnterpriseDetail] = useState<{
@@ -1039,6 +1043,8 @@ const App: React.FC = () => {
 
   const startRecording = useCallback(async () => {
     try {
+      await requestWakeLock(); // Request Screen Wake Lock
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       const recordingStream =
@@ -1048,6 +1054,17 @@ const App: React.FC = () => {
 
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = ctx;
+
+      // --- START BACKGROUND HACK ---
+      // Create a silent oscillator to prevent browser throttling in background tabs
+      const dummyOsc = ctx.createOscillator();
+      const dummyGain = ctx.createGain();
+      dummyGain.gain.value = 0.001; // Tiny gain to keep audio engine active
+      dummyOsc.connect(dummyGain);
+      dummyGain.connect(ctx.destination);
+      dummyOsc.start();
+      (ctx as any)._dummyOsc = dummyOsc;
+      // --- END BACKGROUND HACK ---
 
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
@@ -1069,11 +1086,11 @@ const App: React.FC = () => {
       };
 
       mediaRecorder.start();
-      showToast("Neural Capture Mode Engaged", "info");
+      showToast("Neural Capture Mode Engaged (Background Safe)", "info");
     } catch {
       alert("Microphone access is required for ScribeAI.");
     }
-  }, [shareMeetingAudio, displayStream]);
+  }, [shareMeetingAudio, displayStream, requestWakeLock, showToast]);
 
   const stopRecording = useCallback(async () => {
     const recorder = mediaRecorderRef.current;
@@ -1148,7 +1165,12 @@ const App: React.FC = () => {
         setIsProcessing(false);
         setIsRecording(false);
 
+        // CLEANUP: Release Wake Lock and Stop Oscillator
         try {
+          await releaseWakeLock();
+          if (audioContextRef.current && (audioContextRef.current as any)._dummyOsc) {
+            try { (audioContextRef.current as any)._dummyOsc.stop(); } catch {}
+          }
           audioContextRef.current?.close();
         } catch {
           // ignore

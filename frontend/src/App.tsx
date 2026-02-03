@@ -1083,25 +1083,31 @@ const App: React.FC = () => {
 
   const startRecording = useCallback(async () => {
     try {
-      await requestWakeLock(); // Request Screen Wake Lock
-
+      // 1. Get Mic Permission FIRST (Critical)
       const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // 2. Request Wake Lock (Non-blocking / Optional)
+      requestWakeLock().catch(e => console.warn("Wake lock failed", e));
+
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = ctx;
 
-      // 1. Create the Destination (The single mixed stream we will record)
+      // 3. Create the Destination (The single mixed stream we will record)
       const destination = ctx.createMediaStreamDestination();
 
-      // 2. Add Microphone to Mix
+      // 4. Add Microphone to Mix
       const micSource = ctx.createMediaStreamSource(micStream);
       micSource.connect(destination);
 
-      // 3. Add System Audio to Mix (if shared)
+      // 5. Add System Audio to Mix (if shared)
       if (shareMeetingAudio && displayStream) {
-        // Note: displayStream might have video, but we only want audio for the mixer
-        if (displayStream.getAudioTracks().length > 0) {
-           const systemSource = ctx.createMediaStreamSource(displayStream);
-           systemSource.connect(destination);
+        try {
+          if (displayStream.getAudioTracks().length > 0) {
+             const systemSource = ctx.createMediaStreamSource(displayStream);
+             systemSource.connect(destination);
+          }
+        } catch (err) {
+          console.warn("Could not mix system audio", err);
         }
       }
 
@@ -1149,8 +1155,10 @@ const App: React.FC = () => {
       // Request data every 5 seconds to trigger ondataavailable and auto-save
       mediaRecorder.start(5000); 
       showToast("Neural Capture (Auto-Save Active)", "info");
-    } catch {
-      alert("Microphone access is required for ScribeAI.");
+    } catch (err: any) {
+      console.error("Recording Start Error:", err);
+      // Show the REAL error message
+      alert(`Could not start recording: ${err.message || err.name || "Unknown Error"}`);
     }
   }, [shareMeetingAudio, displayStream, requestWakeLock, showToast]);
 

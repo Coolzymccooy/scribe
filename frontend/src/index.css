@@ -13,11 +13,11 @@
  * App.tsx for where the theme is set on the document element.
  */
 
- :root {
+:root {
   font-size: 14px; /* makes everything slightly more compact */
 }
 
- :root { color-scheme: dark; }
+:root { color-scheme: dark; }
 body { margin: 0; }
 
 html, body {
@@ -28,6 +28,12 @@ html, body {
 :root {
   --bg-deep: #020617;
   --text-main: #f8fafc;
+  --machine-edge: rgba(56, 189, 248, 0.18);
+  --machine-glass: rgba(15, 23, 42, 0.72);
+  --machine-panel: rgba(15, 23, 42, 0.58);
+  --machine-panel-soft: rgba(15, 23, 42, 0.38);
+  --machine-accent: #22d3ee;
+  --machine-accent-strong: #06b6d4;
 }
 
 html.light {
@@ -49,6 +55,79 @@ body {
 
 .font-tech-label {
   font-family: "JetBrains Mono", "Space Grotesk", sans-serif;
+}
+
+.machine-shell {
+  background:
+    radial-gradient(1100px 540px at -12% -15%, rgba(45, 212, 191, 0.17), transparent 58%),
+    radial-gradient(900px 460px at 115% -18%, rgba(14, 165, 233, 0.2), transparent 55%),
+    linear-gradient(165deg, #020617 0%, #020b2a 38%, #03142f 100%);
+}
+
+.machine-sidebar {
+  background: linear-gradient(180deg, rgba(6, 14, 36, 0.86) 0%, rgba(7, 16, 43, 0.92) 100%);
+  border-right-color: rgba(100, 116, 139, 0.2);
+  box-shadow: inset -1px 0 0 rgba(148, 163, 184, 0.08);
+}
+
+.machine-topbar {
+  background: linear-gradient(180deg, rgba(4, 11, 30, 0.86) 0%, rgba(5, 13, 36, 0.74) 100%);
+  border-bottom-color: rgba(100, 116, 139, 0.22);
+}
+
+.machine-panel {
+  background: var(--machine-panel);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  box-shadow: 0 24px 52px -42px rgba(8, 47, 73, 0.95);
+  backdrop-filter: blur(16px);
+}
+
+.machine-kicker {
+  color: var(--machine-accent);
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 800;
+  font-family: "JetBrains Mono", "Space Grotesk", sans-serif;
+}
+
+.machine-input {
+  background: rgba(2, 6, 23, 0.65);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  color: #dbeafe;
+  border-radius: 14px;
+}
+
+.machine-input:focus {
+  border-color: rgba(34, 211, 238, 0.75);
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.18);
+}
+
+.machine-cta {
+  background: linear-gradient(140deg, var(--machine-accent-strong), #2563eb);
+  border: 1px solid rgba(125, 211, 252, 0.34);
+  color: #eff6ff;
+  border-radius: 12px;
+  box-shadow: 0 18px 36px -24px rgba(14, 165, 233, 0.9);
+}
+
+.machine-nav-item {
+  border: 1px solid transparent;
+  color: #94a3b8;
+  border-radius: 12px;
+}
+
+.machine-nav-item:hover {
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.64);
+  border-color: rgba(100, 116, 139, 0.28);
+}
+
+.machine-nav-item-active {
+  color: #67e8f9;
+  background: rgba(6, 182, 212, 0.12);
+  border-color: rgba(103, 232, 249, 0.32);
+  box-shadow: inset 0 0 0 1px rgba(103, 232, 249, 0.08);
 }
 
 /* Background gradient used behind the app. Elements with this class
@@ -129,4 +208,13 @@ html.light .mesh-gradient {
 
 button {
   touch-action: manipulation;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+input,
+select,
+textarea {
+  font-family: "JetBrains Mono", "Space Grotesk", sans-serif;
+  font-size: 12px;
 }

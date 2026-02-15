@@ -364,15 +364,15 @@ const SidebarItem: React.FC<{
 }> = ({ icon, label, active, onClick, tooltip }) => (
   <button
     onClick={onClick}
-    className={`group relative w-full flex items-center gap-3 p-2.5 md:p-3 rounded-xl transition-all
+    className={`machine-nav-item group relative w-full flex items-center gap-3 p-2.5 md:p-3 transition-all
       ${
         active
-          ? "bg-indigo-600/15 text-indigo-400 border border-indigo-500/20 shadow-lg"
-          : "text-slate-500 hover:text-slate-900 dark:text-slate-500 dark:hover:text-slate-100 hover:bg-slate-900/5 dark:hover:bg-white/5"
+          ? "machine-nav-item-active"
+          : ""
       }`}
   >
     <div className="transition-transform group-hover:scale-110 shrink-0">{icon}</div>
-    <span className="font-black text-[9px] md:text-[10px] uppercase tracking-widest truncate">{label}</span>
+    <span className="font-tech-label font-black text-[9px] md:text-[10px] uppercase tracking-[0.18em] truncate">{label}</span>
     <Tooltip text={tooltip} />
   </button>
 );
@@ -396,9 +396,9 @@ const Layout: React.FC<{
   }, [theme]);
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans overflow-hidden transition-colors duration-300">
+    <div className="machine-shell flex h-screen text-slate-100 font-sans overflow-hidden transition-colors duration-300">
       <aside
-        className={`fixed inset-y-0 left-0 w-52 md:w-60 border-r border-slate-200 dark:border-white/5 bg-white/80 dark:bg-slate-900/40 backdrop-blur-3xl flex flex-col p-6 space-y-8 z-40 transition-transform lg:relative lg:translate-x-0
+        className={`machine-sidebar fixed inset-y-0 left-0 w-52 md:w-60 border-r backdrop-blur-3xl flex flex-col p-5 md:p-6 space-y-7 z-40 transition-transform lg:relative lg:translate-x-0
           ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
       >
         <div
@@ -408,10 +408,10 @@ const Layout: React.FC<{
           }}
           className="flex items-center gap-3 cursor-pointer mb-2"
         >
-          <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-black text-lg shadow-2xl">
+          <div className="w-9 h-9 machine-cta rounded-xl flex items-center justify-center text-white font-black text-base">
             S
           </div>
-          <span className="font-black text-xl tracking-tighter">ScribeAI</span>
+          <span className="font-tech-display font-black text-xl tracking-tight text-slate-100">ScribeAI</span>
         </div>
 
         <nav className="flex-1 space-y-1">
@@ -480,7 +480,7 @@ const Layout: React.FC<{
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0 z-10 overflow-hidden relative">
-        <header className="h-16 md:h-20 flex items-center justify-between px-4 md:px-10 border-b border-slate-200 dark:border-white/5 backdrop-blur-md bg-white/60 dark:bg-transparent">
+        <header className="machine-topbar h-16 md:h-20 flex items-center justify-between px-4 md:px-8 border-b backdrop-blur-md">
           <button
             onClick={() => setIsMobileMenuOpen((s) => !s)}
             className="lg:hidden p-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors"
@@ -495,9 +495,8 @@ const Layout: React.FC<{
             <input
               type="text"
               placeholder="Scan neural cache..."
-              className="w-full pl-11 pr-4 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest
-                bg-slate-200/50 dark:bg-white/5 border border-slate-300 dark:border-white/5
-                focus:border-indigo-500/50 outline-none transition-all placeholder-slate-400"
+              className="machine-input w-full pl-11 pr-4 py-2.5 text-[10px] font-black uppercase tracking-[0.18em]
+                outline-none transition-all placeholder-slate-500"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -510,8 +509,8 @@ const Layout: React.FC<{
                 className={`p-2.5 rounded-full border transition-all
                   ${
                     theme === "dark"
-                      ? "bg-white/5 text-amber-400 border-white/5"
-                      : "bg-indigo-600 text-white shadow-lg border-indigo-600"
+                      ? "bg-white/5 text-amber-400 border-white/10"
+                      : "machine-cta border-sky-300/40"
                   }`}
               >
                 {theme === "dark" ? "☀️" : "🌙"}
@@ -522,7 +521,7 @@ const Layout: React.FC<{
             <div className="group relative">
               <button
                 onClick={() => setView("recorder")}
-                className="bg-indigo-600 px-4 md:px-6 py-2.5 rounded-full font-black text-[10px] uppercase tracking-widest text-white shadow-lg hover:bg-indigo-700 transition-all"
+                className="machine-cta px-4 md:px-5 py-2.5 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all"
               >
                 Studio Live
               </button>
@@ -531,7 +530,7 @@ const Layout: React.FC<{
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-10">{children}</div>
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">{children}</div>
       </main>
 
       {isMobileMenuOpen && (
@@ -542,7 +541,7 @@ const Layout: React.FC<{
       )}
 
       {toast && (
-        <div className="fixed bottom-4 right-4 px-6 py-3 rounded-2xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest shadow-3xl z-50 flex items-center gap-4 border border-white/10">
+        <div className="fixed bottom-4 right-4 px-5 py-2.5 rounded-xl machine-panel text-slate-100 font-tech-label text-[10px] uppercase tracking-[0.2em] shadow-3xl z-50 flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-white animate-ping"></div>
           <span>{toast.message}</span>
         </div>
@@ -784,7 +783,7 @@ const App: React.FC = () => {
   };
 
   const { requestWakeLock, releaseWakeLock } = useWakeLock();
-
+  const { requestWakeLock, releaseWakeLock } = useWakeLock();
   // Modals & details
   const [activeArticle, setActiveArticle] = useState<{ title: string; content: string } | null>(null);
   const [enterpriseDetail, setEnterpriseDetail] = useState<{
@@ -1616,13 +1615,15 @@ const App: React.FC = () => {
         setIsRecording(true);
       };
 
-      mediaRecorder.start(5000); 
+      mediaRecorder.start(500);
+      void requestWakeLock();
       showToast("Neural Capture (Auto-Save Active)", "info");
-    } catch (err: any) {
-      console.error("Recording Start Error:", err);
-      alert(`Could not start recording: ${err.message || err.name || "Unknown Error"}`);
+    } catch (err) {
+      cleanupRecordingResources();
+      const message = err instanceof Error ? err.message : "Microphone access is required for ScribeAI.";
+      showToast(message, "info");
     }
-  }, [shareMeetingAudio, displayStream, showToast]);
+  }, [cleanupRecordingResources, displayStream, requestWakeLock, shareMeetingAudio, showToast]);
 
   const stopRecording = useCallback(async () => {
     const recorder = mediaRecorderRef.current;
@@ -1736,7 +1737,7 @@ const App: React.FC = () => {
       // no-op
     }
     recorder.stop();
-  }, [accentMode, cleanupRecordingResources, inputSource, recordingTime, releaseWakeLock, showToast]);
+  }, [accentMode, cleanupRecordingResources, currentSessionId, inputSource, recordingTime, releaseWakeLock, showToast]);
 
   const handleUploadAudio = useCallback(async (file: File) => {
     if (isProcessing || isRecording) return;
@@ -2306,8 +2307,8 @@ const App: React.FC = () => {
               onClick={() => (shareMeetingAudio ? clearDisplayStream() : void handleShareMeetingAudio())}
               className={`px-5 py-3 rounded-2xl border font-black text-[10px] uppercase tracking-widest transition ${
                 shareMeetingAudio
-                  ? "bg-white text-indigo-600 border-indigo-600"
-                  : "bg-transparent text-white border-white/50 hover:border-white"
+                  ? "machine-cta text-white border-sky-300/40"
+                  : "bg-transparent text-slate-100 border-slate-500/70 hover:border-sky-300/60"
               }`}
             >
               {shareMeetingAudio ? "Stop sharing meeting" : "Share meeting audio"}
@@ -2321,7 +2322,7 @@ const App: React.FC = () => {
               ? "Screen wake lock is active while recording."
               : "If your phone sleeps, mobile browsers may pause capture. Keep the screen awake during sessions."}
           </p>
-          <div className="w-full max-w-3xl p-6 rounded-[2.25rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/10 shadow-xl space-y-5">
+          <div className="machine-panel w-full max-w-3xl p-6 rounded-[2rem] space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.32em] text-emerald-500">Recording Diagnostics</p>
@@ -2333,10 +2334,10 @@ const App: React.FC = () => {
                 type="button"
                 onClick={() => (diagnosticsEnabled ? stopDiagnostics() : void startDiagnostics())}
                 disabled={diagnosticsLoading || isRecording || isProcessing}
-                className={`h-11 px-5 rounded-xl text-[10px] font-black uppercase tracking-[0.24em] transition ${
+                className={`h-10 px-5 rounded-xl text-[10px] font-black uppercase tracking-[0.24em] transition ${
                   diagnosticsEnabled
                     ? "bg-rose-600 text-white hover:bg-rose-700"
-                    : "bg-emerald-600 text-white hover:bg-emerald-700"
+                    : "machine-cta text-white"
                 } disabled:opacity-60 disabled:cursor-not-allowed`}
               >
                 {diagnosticsLoading ? "Starting..." : diagnosticsEnabled ? "Stop Diagnostics" : "Start Diagnostics"}
@@ -2344,7 +2345,7 @@ const App: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900/60 space-y-3">
+              <div className="machine-panel p-4 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">Mic Input</span>
                   <span className="text-xs font-black text-emerald-500">{Math.round(micLevel * 100)}%</span>
@@ -2365,7 +2366,7 @@ const App: React.FC = () => {
                 </p>
               </div>
 
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900/60 space-y-3">
+              <div className="machine-panel p-4 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">System Input</span>
                   <span className={`text-xs font-black ${hasSystemDiagnosticsInput ? "text-sky-500" : "text-slate-500"}`}>
@@ -2458,7 +2459,7 @@ const App: React.FC = () => {
 	    </div>
 	  )}
 </div>
-          <div className="w-full max-w-5xl p-7 rounded-[3rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 backdrop-blur-3xl shadow-2xl grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+          <div className="machine-panel w-full max-w-5xl p-6 rounded-[2rem] grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
             <div className="space-y-2">
               <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest ml-4">Input</label>
               <select

@@ -1,3 +1,17 @@
+## Session Log (February 15, 2026)
+
+- Added Firebase authentication integration with Google sign-in plus email/password sign-in, sign-up, and reset-password.
+- Added a full auth gate and redesigned login interface.
+- Upgraded recording to mix microphone + shared meeting/system audio for two-way meeting capture.
+- Added wake lock and visibility handling to reduce sleep/background recording loss.
+- Added recording diagnostics panel with live mic/system levels and confidence badges.
+- Fixed transcription mime normalization for recorder compatibility.
+- Added microphone device picker + persistence so recording uses the intended mic.
+- Added auto-save chunk recovery support for interrupted sessions.
+- Tightened transcription anti-hallucination guidance to reduce fabricated speaker content.
+- Standardized UI toward a machine-grade design system (technical typography, unified shell/panels/controls, compact spacing).
+
+---
 <!-- README for the refactored ScribeAI project -->
 
 # ScribeAI – Offline‑First Meeting Assistant

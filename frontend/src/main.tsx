@@ -1,7 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
-import App from "./App";
+import AppRoot from "./AppRoot";
 
 // Bootstraps the ScribeAI application. Using React 18's
 // createRoot allows us to opt into concurrent rendering when it
@@ -10,7 +10,7 @@ import App from "./App";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <AppRoot />
   </React.StrictMode>
 );
 

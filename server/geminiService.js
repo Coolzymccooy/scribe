@@ -29,6 +29,9 @@ export async function transcribeAudio(audio, mimeType, accent) {
     1. Identify different speakers.
     2. Provide timestamps in seconds.
     3. Return a JSON array of objects: "id", "startTime", "endTime", "speaker", "text".
+    4. Do not invent or paraphrase unheard speech. If words are unclear, use "[inaudible]" only for the unclear fragment.
+    5. If only one voice is audible, return only one speaker. Do not fabricate "Speaker 2".
+    6. If silence/no speech is present, return an empty array.
   `;
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',

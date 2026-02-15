@@ -94,6 +94,15 @@ const normalizeMimeType = (file: File) => {
   return "audio/mpeg";
 };
 
+const normalizeMimeTypeForTranscription = (mimeType: string) => {
+  const base = String(mimeType || "").toLowerCase().split(";")[0].trim();
+  if (!base) return "audio/webm";
+  if (base === "audio/x-m4a") return "audio/mp4";
+  if (base === "audio/mp3") return "audio/mpeg";
+  if (base === "video/webm") return "audio/webm";
+  return base;
+};
+
 const fileToBase64Payload = (fileOrBlob: Blob) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -265,6 +274,76 @@ const safeTitleFromTranscript = (segments: TranscriptSegment[], fallback: string
 };
 
 const AUTO_LISTEN_PROVIDERS = ["google", "microsoft"];
+
+type ScreenWakeLockSentinel = {
+  release: () => Promise<void>;
+  released?: boolean;
+  addEventListener?: (type: "release", listener: () => void) => void;
+};
+
+const pickRecorderMimeType = () => {
+  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") {
+    return undefined;
+  }
+
+  const preferred = ["audio/webm;codecs=opus", "audio/webm", "video/webm;codecs=opus"];
+  for (const type of preferred) {
+    if (MediaRecorder.isTypeSupported(type)) return type;
+  }
+
+  return undefined;
+};
+
+const stopStreamSafely = (stream: MediaStream | null) => {
+  if (!stream) return;
+  stream.getTracks().forEach((track) => {
+    try {
+      track.stop();
+    } catch {
+      // no-op
+    }
+  });
+};
+
+const MIC_CONFIDENCE_THRESHOLD = 0.12;
+const SYSTEM_CONFIDENCE_THRESHOLD = 0.12;
+const CONFIDENCE_HOLD_MS = 1200;
+
+const getAnalyserLevel = (analyser: AnalyserNode | null) => {
+  if (!analyser) return 0;
+
+  const timeDomain = new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(timeDomain);
+
+  let sumSquares = 0;
+  for (let i = 0; i < timeDomain.length; i++) {
+    const normalized = (timeDomain[i] - 128) / 128;
+    sumSquares += normalized * normalized;
+  }
+  const rms = Math.sqrt(sumSquares / timeDomain.length);
+
+  const freqDomain = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(freqDomain);
+  let spectralSum = 0;
+  for (let i = 0; i < freqDomain.length; i++) {
+    spectralSum += freqDomain[i];
+  }
+  const spectralAverage = spectralSum / (freqDomain.length * 255);
+
+  const rmsBoosted = Math.max(0, (rms - 0.002) * 82);
+  const spectralBoosted = Math.max(0, (spectralAverage - 0.006) * 9.5);
+
+  return Math.max(0, Math.min(1, Math.max(rmsBoosted, spectralBoosted)));
+};
+
+const buildMicAudioConstraints = (deviceId: string, rawCapture: boolean): MediaTrackConstraints => ({
+  deviceId: deviceId !== "default" ? { exact: deviceId } : undefined,
+  channelCount: 1,
+  sampleRate: 48000,
+  echoCancellation: !rawCapture,
+  noiseSuppression: !rawCapture,
+  autoGainControl: !rawCapture,
+});
 
 
 const SidebarItem: React.FC<{
@@ -657,6 +736,10 @@ const App: React.FC = () => {
   const [accentMode, setAccentMode] = useState<"standard" | "uk" | "nigerian">("standard");
   const [inputSource, setInputSource] = useState("Studio Mic");
   const [gateSensitivity, setGateSensitivity] = useState(75);
+  const [audioInputDevices, setAudioInputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedMicDeviceId, setSelectedMicDeviceId] = useState<string>(() => {
+    return localStorage.getItem("scribe_selected_mic_device_id") || "default";
+  });
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "info" } | null>(null);
 
@@ -770,11 +853,321 @@ const App: React.FC = () => {
   const audioChunksRef = useRef<Blob[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const recordingStartedAtRef = useRef<number | null>(null);
+  const recordingMimeTypeRef = useRef("audio/webm");
+  const wakeLockRef = useRef<ScreenWakeLockSentinel | null>(null);
+  const visibilityWarningShownRef = useRef(false);
+  const [wakeLockActive, setWakeLockActive] = useState(false);
+  const diagnosticsContextRef = useRef<AudioContext | null>(null);
+  const diagnosticsMicStreamRef = useRef<MediaStream | null>(null);
+  const diagnosticsMicSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const diagnosticsSystemSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const diagnosticsMicAnalyserRef = useRef<AnalyserNode | null>(null);
+  const diagnosticsSystemAnalyserRef = useRef<AnalyserNode | null>(null);
+  const diagnosticsAnimationRef = useRef<number | null>(null);
+  const micConfidenceSinceRef = useRef<number | null>(null);
+  const systemConfidenceSinceRef = useRef<number | null>(null);
+  const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnosticsNote, setDiagnosticsNote] = useState<string | null>(null);
+  const [micLevel, setMicLevel] = useState(0);
+  const [systemLevel, setSystemLevel] = useState(0);
+  const [micConfidenceOk, setMicConfidenceOk] = useState(false);
+  const [systemConfidenceOk, setSystemConfidenceOk] = useState(false);
+  const [hasSystemDiagnosticsInput, setHasSystemDiagnosticsInput] = useState(false);
 
   const showToast = useCallback((message: string, type: "success" | "info" = "success") => {
     setToast({ message, type });
     window.setTimeout(() => setToast(null), 3000);
   }, []);
+
+  const refreshAudioInputs = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices.filter((device) => device.kind === "audioinput");
+      setAudioInputDevices(inputs);
+      if (selectedMicDeviceId !== "default" && !inputs.some((device) => device.deviceId === selectedMicDeviceId)) {
+        setSelectedMicDeviceId("default");
+      }
+    } catch {
+      // no-op
+    }
+  }, [selectedMicDeviceId]);
+
+  const requestMicStream = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("This browser does not support microphone capture.");
+    }
+
+    const attempts: MediaStreamConstraints[] = [
+      { audio: buildMicAudioConstraints(selectedMicDeviceId, true) },
+      { audio: buildMicAudioConstraints(selectedMicDeviceId, false) },
+      { audio: true },
+    ];
+
+    let lastError: unknown = null;
+    for (const constraints of attempts) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        await refreshAudioInputs();
+        return stream;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    if (lastError instanceof Error) {
+      throw lastError;
+    }
+    throw new Error("Microphone access is required for ScribeAI.");
+  }, [refreshAudioInputs, selectedMicDeviceId]);
+
+  const stopDiagnosticsLoop = useCallback(() => {
+    const frame = diagnosticsAnimationRef.current;
+    if (frame !== null) {
+      cancelAnimationFrame(frame);
+      diagnosticsAnimationRef.current = null;
+    }
+  }, []);
+
+  const cleanupDiagnostics = useCallback(() => {
+    stopDiagnosticsLoop();
+
+    try {
+      diagnosticsMicSourceRef.current?.disconnect();
+    } catch {
+      // no-op
+    }
+    try {
+      diagnosticsSystemSourceRef.current?.disconnect();
+    } catch {
+      // no-op
+    }
+
+    diagnosticsMicSourceRef.current = null;
+    diagnosticsSystemSourceRef.current = null;
+    diagnosticsMicAnalyserRef.current = null;
+    diagnosticsSystemAnalyserRef.current = null;
+
+    stopStreamSafely(diagnosticsMicStreamRef.current);
+    diagnosticsMicStreamRef.current = null;
+
+    const ctx = diagnosticsContextRef.current;
+    diagnosticsContextRef.current = null;
+    if (ctx) {
+      void ctx.close().catch(() => {
+        // no-op
+      });
+    }
+
+    setMicLevel(0);
+    setSystemLevel(0);
+    micConfidenceSinceRef.current = null;
+    systemConfidenceSinceRef.current = null;
+    setMicConfidenceOk(false);
+    setSystemConfidenceOk(false);
+    setHasSystemDiagnosticsInput(false);
+  }, [stopDiagnosticsLoop]);
+
+  const startDiagnosticsLoop = useCallback(() => {
+    stopDiagnosticsLoop();
+
+    const run = () => {
+      const now = performance.now();
+      const mic = getAnalyserLevel(diagnosticsMicAnalyserRef.current);
+      const system = getAnalyserLevel(diagnosticsSystemAnalyserRef.current);
+      setMicLevel(mic);
+      setSystemLevel(system);
+
+      if (mic >= MIC_CONFIDENCE_THRESHOLD) {
+        if (micConfidenceSinceRef.current === null) {
+          micConfidenceSinceRef.current = now;
+        }
+        setMicConfidenceOk(now - micConfidenceSinceRef.current >= CONFIDENCE_HOLD_MS);
+      } else {
+        micConfidenceSinceRef.current = null;
+        setMicConfidenceOk(false);
+      }
+
+      if (hasSystemDiagnosticsInput && system >= SYSTEM_CONFIDENCE_THRESHOLD) {
+        if (systemConfidenceSinceRef.current === null) {
+          systemConfidenceSinceRef.current = now;
+        }
+        setSystemConfidenceOk(now - systemConfidenceSinceRef.current >= CONFIDENCE_HOLD_MS);
+      } else {
+        systemConfidenceSinceRef.current = null;
+        setSystemConfidenceOk(false);
+      }
+
+      diagnosticsAnimationRef.current = requestAnimationFrame(run);
+    };
+
+    diagnosticsAnimationRef.current = requestAnimationFrame(run);
+  }, [hasSystemDiagnosticsInput, stopDiagnosticsLoop]);
+
+  const refreshSystemDiagnosticsInput = useCallback(() => {
+    const ctx = diagnosticsContextRef.current;
+    if (!ctx || !diagnosticsEnabled) return;
+
+    try {
+      diagnosticsSystemSourceRef.current?.disconnect();
+    } catch {
+      // no-op
+    }
+    diagnosticsSystemSourceRef.current = null;
+    diagnosticsSystemAnalyserRef.current = null;
+
+    const remoteAudioTracks = displayStreamRef.current?.getAudioTracks() || [];
+    if (!remoteAudioTracks.length) {
+      setHasSystemDiagnosticsInput(false);
+      setSystemLevel(0);
+      setDiagnosticsNote("System level inactive. Click 'Share meeting audio' and enable tab/window audio.");
+      return;
+    }
+
+    try {
+      const remoteAudioStream = new MediaStream(remoteAudioTracks);
+      const source = ctx.createMediaStreamSource(remoteAudioStream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.7;
+      source.connect(analyser);
+      diagnosticsSystemSourceRef.current = source;
+      diagnosticsSystemAnalyserRef.current = analyser;
+      setHasSystemDiagnosticsInput(true);
+      setDiagnosticsNote("System input detected. Play remote audio and confirm the meter responds.");
+    } catch {
+      setHasSystemDiagnosticsInput(false);
+      setSystemLevel(0);
+      setDiagnosticsNote("Could not analyze system audio on this browser session.");
+    }
+  }, [diagnosticsEnabled]);
+
+  const startDiagnostics = useCallback(async () => {
+    if (diagnosticsLoading || diagnosticsEnabled || isRecording || isProcessing) return;
+
+    setDiagnosticsLoading(true);
+    setDiagnosticsNote(null);
+
+    try {
+      const micStream = await requestMicStream();
+      const micTrack = micStream.getAudioTracks()[0];
+      if (!micTrack) {
+        throw new Error("No microphone track available. Check browser microphone permissions.");
+      }
+      if (micTrack.muted) {
+        setDiagnosticsNote("Selected microphone is muted by the browser/device.");
+      }
+      diagnosticsMicStreamRef.current = micStream;
+
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      diagnosticsContextRef.current = ctx;
+      if (ctx.state === "suspended") {
+        await ctx.resume().catch(() => {
+          // no-op
+        });
+      }
+
+      const micSource = ctx.createMediaStreamSource(micStream);
+      const micAnalyser = ctx.createAnalyser();
+      micAnalyser.fftSize = 1024;
+      micAnalyser.smoothingTimeConstant = 0.72;
+      micAnalyser.minDecibels = -95;
+      micAnalyser.maxDecibels = -15;
+      micSource.connect(micAnalyser);
+      diagnosticsMicSourceRef.current = micSource;
+      diagnosticsMicAnalyserRef.current = micAnalyser;
+
+      setDiagnosticsEnabled(true);
+      setDiagnosticsNote(`Microphone diagnostics active (${micTrack.label || "selected input"}).`);
+      startDiagnosticsLoop();
+    } catch (err) {
+      cleanupDiagnostics();
+      setDiagnosticsEnabled(false);
+      const msg = err instanceof Error ? err.message : "Diagnostics start failed.";
+      setDiagnosticsNote(msg);
+      showToast(msg, "info");
+    } finally {
+      setDiagnosticsLoading(false);
+    }
+  }, [cleanupDiagnostics, diagnosticsEnabled, diagnosticsLoading, isProcessing, isRecording, requestMicStream, showToast, startDiagnosticsLoop]);
+
+  const stopDiagnostics = useCallback(() => {
+    cleanupDiagnostics();
+    setDiagnosticsEnabled(false);
+    setDiagnosticsNote("Diagnostics stopped.");
+  }, [cleanupDiagnostics]);
+
+  const releaseWakeLock = useCallback(async () => {
+    const wakeLock = wakeLockRef.current;
+    wakeLockRef.current = null;
+    setWakeLockActive(false);
+    if (!wakeLock) return;
+    try {
+      await wakeLock.release();
+    } catch {
+      // no-op
+    }
+  }, []);
+
+  const requestWakeLock = useCallback(async () => {
+    if (typeof navigator === "undefined") return false;
+    const wakeLockApi = (navigator as Navigator & {
+      wakeLock?: { request: (type: "screen") => Promise<ScreenWakeLockSentinel> };
+    }).wakeLock;
+
+    if (!wakeLockApi || document.visibilityState !== "visible") return false;
+
+    try {
+      const wakeLock = await wakeLockApi.request("screen");
+      wakeLockRef.current = wakeLock;
+      setWakeLockActive(true);
+      wakeLock.addEventListener?.("release", () => {
+        wakeLockRef.current = null;
+        setWakeLockActive(false);
+      });
+      return true;
+    } catch {
+      setWakeLockActive(false);
+      return false;
+    }
+  }, []);
+
+  const cleanupRecordingResources = useCallback(() => {
+    mediaRecorderRef.current = null;
+    analyserRef.current = null;
+    recordingStartedAtRef.current = null;
+    recordingMimeTypeRef.current = "audio/webm";
+    stopStreamSafely(micStreamRef.current);
+    micStreamRef.current = null;
+
+    const ctx = audioContextRef.current;
+    audioContextRef.current = null;
+    if (ctx) {
+      void ctx.close().catch(() => {
+        // no-op
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("scribe_selected_mic_device_id", selectedMicDeviceId);
+  }, [selectedMicDeviceId]);
+
+  useEffect(() => {
+    void refreshAudioInputs();
+    const mediaDevices = navigator.mediaDevices;
+    if (!mediaDevices?.addEventListener) return;
+
+    const onDeviceChange = () => {
+      void refreshAudioInputs();
+    };
+
+    mediaDevices.addEventListener("devicechange", onDeviceChange);
+    return () => mediaDevices.removeEventListener("devicechange", onDeviceChange);
+  }, [refreshAudioInputs]);
 
   // Persist auto-listen prefs
   useEffect(() => {
@@ -837,6 +1230,51 @@ const App: React.FC = () => {
   }, [clearDisplayStream]);
 
   useEffect(() => {
+    if (!diagnosticsEnabled) return;
+    refreshSystemDiagnosticsInput();
+  }, [diagnosticsEnabled, refreshSystemDiagnosticsInput, displayStream, shareMeetingAudio]);
+
+  useEffect(() => {
+    if (view === "recorder") return;
+    if (!diagnosticsEnabled) return;
+    cleanupDiagnostics();
+    setDiagnosticsEnabled(false);
+  }, [cleanupDiagnostics, diagnosticsEnabled, view]);
+
+  useEffect(() => {
+    return () => {
+      cleanupRecordingResources();
+      cleanupDiagnostics();
+      void releaseWakeLock();
+    };
+  }, [cleanupDiagnostics, cleanupRecordingResources, releaseWakeLock]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (!isRecording) return;
+
+      if (document.visibilityState === "hidden" && !visibilityWarningShownRef.current) {
+        visibilityWarningShownRef.current = true;
+        showToast("Phone sleep can pause capture. Keep the screen awake during recording.", "info");
+      }
+
+      if (document.visibilityState === "visible") {
+        visibilityWarningShownRef.current = false;
+        void requestWakeLock();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [isRecording, requestWakeLock, showToast]);
+
+  useEffect(() => {
+    if (!isRecording) {
+      void releaseWakeLock();
+    }
+  }, [isRecording, releaseWakeLock]);
+
+  useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     const onPlay = () => setIsRecapPlaying(true);
@@ -874,6 +1312,7 @@ const App: React.FC = () => {
           signal: controller.signal,
         });
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("AUTO-LISTEN SYNC ERROR:", err);
       }
     };
@@ -1038,52 +1477,127 @@ const App: React.FC = () => {
   };
 
   const startRecording = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (isRecording || isProcessing) return;
+    if (diagnosticsEnabled) {
+      cleanupDiagnostics();
+      setDiagnosticsEnabled(false);
+    }
 
-      const recordingStream =
-        shareMeetingAudio && displayStream
-          ? new MediaStream([...stream.getAudioTracks(), ...displayStream.getAudioTracks()])
-          : stream;
+    try {
+      const micStream = await requestMicStream();
+      const micTrack = micStream.getAudioTracks()[0];
+      if (!micTrack) {
+        throw new Error("No microphone track available. Check your selected microphone device.");
+      }
+
+      micTrack.onmute = () => showToast("Microphone muted by browser/device. Check your mic selection.", "info");
+      micTrack.onended = () => showToast("Microphone stopped. Re-select a mic and retry recording.", "info");
+
+      micStreamRef.current = micStream;
 
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = ctx;
+      if (ctx.state === "suspended") {
+        await ctx.resume().catch(() => {
+          // no-op
+        });
+      }
 
-      const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
-      source.connect(analyser);
 
-      const mediaRecorder = new MediaRecorder(recordingStream);
+      const destination = ctx.createMediaStreamDestination();
+
+      const micSource = ctx.createMediaStreamSource(micStream);
+      const micGain = ctx.createGain();
+      micGain.gain.value = shareMeetingAudio ? 2.2 : 1.4;
+      const micCompressor = ctx.createDynamicsCompressor();
+      micCompressor.threshold.value = -40;
+      micCompressor.knee.value = 24;
+      micCompressor.ratio.value = 6;
+      micCompressor.attack.value = 0.003;
+      micCompressor.release.value = 0.2;
+      micSource.connect(micGain);
+      micGain.connect(micCompressor);
+      micCompressor.connect(destination);
+      micSource.connect(analyser);
+
+      const currentDisplayStream = displayStreamRef.current;
+      const remoteAudioTracks = currentDisplayStream?.getAudioTracks() || [];
+      if (shareMeetingAudio && remoteAudioTracks.length > 0) {
+        const remoteAudioStream = new MediaStream(remoteAudioTracks);
+        const remoteSource = ctx.createMediaStreamSource(remoteAudioStream);
+        const remoteGain = ctx.createGain();
+        remoteGain.gain.value = 0.9;
+        remoteSource.connect(remoteGain);
+        remoteGain.connect(destination);
+      }
+
+      if (shareMeetingAudio && remoteAudioTracks.length === 0) {
+        showToast("No meeting audio track detected. Re-share and tick meeting/tab audio.", "info");
+      }
+
+      const outputTrack = destination.stream.getAudioTracks()[0];
+      if (!outputTrack) {
+        throw new Error("No audio track available for recording.");
+      }
+
+      const outputStream = new MediaStream([outputTrack]);
+      const mimeType = pickRecorderMimeType();
+      const mediaRecorder = mimeType
+        ? new MediaRecorder(outputStream, { mimeType })
+        : new MediaRecorder(outputStream);
       mediaRecorderRef.current = mediaRecorder;
+      recordingMimeTypeRef.current = mediaRecorder.mimeType || "audio/webm";
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
       };
 
+      mediaRecorder.onerror = () => {
+        showToast("Recorder error. Try again or switch browser.", "info");
+      };
+
       mediaRecorder.onstart = () => {
+        recordingStartedAtRef.current = Date.now();
         setRecordingTime(0);
         setIsRecording(true);
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(500);
+      void requestWakeLock();
       showToast("Neural Capture Mode Engaged", "info");
-    } catch {
-      alert("Microphone access is required for ScribeAI.");
+    } catch (err) {
+      cleanupRecordingResources();
+      const message = err instanceof Error ? err.message : "Microphone access is required for ScribeAI.";
+      showToast(message, "info");
     }
-  }, [shareMeetingAudio, displayStream]);
+  }, [cleanupDiagnostics, cleanupRecordingResources, diagnosticsEnabled, isProcessing, isRecording, requestMicStream, requestWakeLock, shareMeetingAudio, showToast]);
 
   const stopRecording = useCallback(async () => {
     const recorder = mediaRecorderRef.current;
-    if (!recorder) return;
+    if (!recorder || recorder.state === "inactive") return;
 
+    setIsRecording(false);
     setIsProcessing(true);
+    void releaseWakeLock();
 
     recorder.onstop = async () => {
       try {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const startedAt = recordingStartedAtRef.current;
+        const computedDuration = startedAt ? Math.max(1, Math.round((Date.now() - startedAt) / 1000)) : recordingTime;
+        setRecordingTime(computedDuration);
+
+        if (!audioChunksRef.current.length) {
+          showToast("No audio captured. Keep screen awake and retry.", "info");
+          return;
+        }
+
+        const recordedMimeType = recordingMimeTypeRef.current || "audio/webm";
+        const transcriptionMimeType = normalizeMimeTypeForTranscription(recordedMimeType);
+        const audioBlob = new Blob(audioChunksRef.current, { type: transcriptionMimeType });
         const storageKey = `audio_${Date.now()}`;
         await saveAudioBlob(storageKey, audioBlob);
 
@@ -1101,7 +1615,7 @@ const App: React.FC = () => {
         showToast("AI Processing Transcript...", "info");
 
         // 1) Transcribe
-        const rawTranscript = await transcribeAudio(base64Audio, "audio/webm", accentMode);
+        const rawTranscript = await transcribeAudio(base64Audio, transcriptionMimeType, accentMode);
 
         // Store transcript in UI-friendly segments
         const transcriptSegments = normalizeTranscript(rawTranscript);
@@ -1125,7 +1639,7 @@ const App: React.FC = () => {
           id,
           title,
           date: createdAtIso,
-          duration: recordingTime,
+          duration: computedDuration,
           type: MeetingType.OTHER,
           transcript: transcriptSegments,
           summary,
@@ -1146,20 +1660,17 @@ const App: React.FC = () => {
         showToast("AI synthesis interrupted", "info");
       } finally {
         setIsProcessing(false);
-        setIsRecording(false);
-
-        try {
-          audioContextRef.current?.close();
-        } catch {
-          // ignore
-        }
-        audioContextRef.current = null;
+        cleanupRecordingResources();
       }
     };
 
+    try {
+      recorder.requestData();
+    } catch {
+      // no-op
+    }
     recorder.stop();
-    setIsRecording(false);
-  }, [accentMode, inputSource, recordingTime]);
+  }, [accentMode, cleanupRecordingResources, inputSource, recordingTime, releaseWakeLock, showToast]);
 
   const handleUploadAudio = useCallback(async (file: File) => {
     if (isProcessing || isRecording) return;
@@ -1249,6 +1760,21 @@ const App: React.FC = () => {
         audio: true,
         video: true,
       });
+
+      if (!stream.getAudioTracks().length) {
+        stopStreamSafely(stream);
+        showToast("No system audio detected. Enable meeting/tab audio and retry.", "info");
+        return;
+      }
+
+      stream.getAudioTracks().forEach((track) => {
+        track.addEventListener("ended", () => {
+          setShareMeetingAudio(false);
+          setDisplayStreamState(null);
+          showToast("Meeting audio share ended", "info");
+        });
+      });
+
       stream.getVideoTracks().forEach((track) => track.stop());
       setDisplayStreamState(stream);
       setShareMeetingAudio(true);
@@ -1256,7 +1782,7 @@ const App: React.FC = () => {
     } catch {
       showToast("Meeting audio share cancelled", "info");
     }
-  }, [showToast]);
+  }, [setDisplayStreamState, showToast]);
 
   const playRecap = useCallback(async () => {
     if (!selectedMeeting?.summary) {
@@ -1315,9 +1841,36 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!isRecording) return;
-    const timer = window.setInterval(() => setRecordingTime((t) => t + 1), 1000);
+    const tick = () => {
+      const startedAt = recordingStartedAtRef.current;
+      if (!startedAt) return;
+      setRecordingTime(Math.max(0, Math.round((Date.now() - startedAt) / 1000)));
+    };
+
+    tick();
+    const timer = window.setInterval(tick, 500);
     return () => window.clearInterval(timer);
   }, [isRecording]);
+
+  const micConfidenceState: "ok" | "warming" | "idle" =
+    !diagnosticsEnabled ? "idle" : micConfidenceOk ? "ok" : micLevel >= MIC_CONFIDENCE_THRESHOLD ? "warming" : "idle";
+
+  const systemConfidenceState: "ok" | "warming" | "idle" | "blocked" = !diagnosticsEnabled
+    ? "idle"
+    : !hasSystemDiagnosticsInput
+    ? "blocked"
+    : systemConfidenceOk
+    ? "ok"
+    : systemLevel >= SYSTEM_CONFIDENCE_THRESHOLD
+    ? "warming"
+    : "idle";
+
+  const getBadgeClass = (state: "ok" | "warming" | "idle" | "blocked") => {
+    if (state === "ok") return "border-emerald-500/40 bg-emerald-500/20 text-emerald-300";
+    if (state === "warming") return "border-amber-500/40 bg-amber-500/20 text-amber-300";
+    if (state === "blocked") return "border-rose-500/40 bg-rose-500/20 text-rose-300";
+    return "border-slate-500/40 bg-slate-500/20 text-slate-300";
+  };
 
   const layoutProps = { view, setView, theme, setTheme, searchQuery, setSearchQuery, toast };
 
@@ -1652,13 +2205,13 @@ const App: React.FC = () => {
 
       {/* RECORDER */}
       {view === "recorder" && (
-        <div className="max-w-4xl mx-auto h-full flex flex-col items-center justify-center space-y-10">
+        <div className="max-w-5xl mx-auto min-h-full flex flex-col items-center justify-start py-6 md:py-10 space-y-8">
           <div className="flex flex-col items-center text-center space-y-4">
             <div className="inline-flex items-center gap-3 px-6 py-3 rounded-full bg-indigo-600/10 text-indigo-400 border border-indigo-500/20">
               <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
-              <span className="text-[10px] font-black uppercase tracking-[0.2em]">Neural Engine Ready</span>
+              <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.2em]">Neural Engine Ready</span>
             </div>
-            <h1 className="text-5xl md:text-[92px] font-black tracking-tighter leading-none">
+            <h1 className="font-tech-display text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-black tracking-tight leading-[0.9]">
               {isRecording ? "Listening." : isProcessing ? "Syncing." : "Studio."}
             </h1>
             <p className="text-slate-500 dark:text-slate-400 text-sm font-bold">
@@ -1680,8 +2233,91 @@ const App: React.FC = () => {
               {shareMeetingAudio ? "Remote audio captured" : "Only mic audio recorded"}
             </span>
           </div>
+          <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 text-center max-w-xl">
+            {wakeLockActive
+              ? "Screen wake lock is active while recording."
+              : "If your phone sleeps, mobile browsers may pause capture. Keep the screen awake during sessions."}
+          </p>
+          <div className="w-full max-w-3xl p-6 rounded-[2.25rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/10 shadow-xl space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.32em] text-emerald-500">Recording Diagnostics</p>
+                <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">
+                  Validate mic and remote/system audio levels before recording.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => (diagnosticsEnabled ? stopDiagnostics() : void startDiagnostics())}
+                disabled={diagnosticsLoading || isRecording || isProcessing}
+                className={`h-11 px-5 rounded-xl text-[10px] font-black uppercase tracking-[0.24em] transition ${
+                  diagnosticsEnabled
+                    ? "bg-rose-600 text-white hover:bg-rose-700"
+                    : "bg-emerald-600 text-white hover:bg-emerald-700"
+                } disabled:opacity-60 disabled:cursor-not-allowed`}
+              >
+                {diagnosticsLoading ? "Starting..." : diagnosticsEnabled ? "Stop Diagnostics" : "Start Diagnostics"}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">Mic Input</span>
+                  <span className="text-xs font-black text-emerald-500">{Math.round(micLevel * 100)}%</span>
+                </div>
+                <div className="h-3 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-emerald-500 to-cyan-500 transition-all duration-150"
+                    style={{ width: `${Math.round(micLevel * 100)}%` }}
+                  />
+                </div>
+                <div className="flex justify-start">
+                  <span className={`px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-[0.18em] ${getBadgeClass(micConfidenceState)}`}>
+                    {micConfidenceState === "ok" ? "Mic OK" : micConfidenceState === "warming" ? "Mic stabilizing" : "Mic idle"}
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                  Speak for 1-2s. Badge turns green after crossing {Math.round(MIC_CONFIDENCE_THRESHOLD * 100)}% steadily.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900/60 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">System Input</span>
+                  <span className={`text-xs font-black ${hasSystemDiagnosticsInput ? "text-sky-500" : "text-slate-500"}`}>
+                    {Math.round(systemLevel * 100)}%
+                  </span>
+                </div>
+                <div className="h-3 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-sky-400 via-cyan-500 to-blue-500 transition-all duration-150"
+                    style={{ width: `${Math.round(systemLevel * 100)}%` }}
+                  />
+                </div>
+                <div className="flex justify-start">
+                  <span className={`px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-[0.18em] ${getBadgeClass(systemConfidenceState)}`}>
+                    {systemConfidenceState === "ok"
+                      ? "System OK"
+                      : systemConfidenceState === "warming"
+                      ? "System stabilizing"
+                      : systemConfidenceState === "blocked"
+                      ? "No system feed"
+                      : "System idle"}
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                  {hasSystemDiagnosticsInput
+                    ? "Play the remote speaker audio and confirm this level responds."
+                    : "Share meeting audio first to validate remote speaker capture."}
+                </p>
+              </div>
+            </div>
+
+            {diagnosticsNote && <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">{diagnosticsNote}</p>}
+          </div>
 {/* RECORD + UPLOAD (SIDE BY SIDE) */}
-<div className="relative flex items-center justify-center gap-5">
+<div className="relative flex flex-wrap items-center justify-center gap-5">
   {/* MAIN RECORD CONTROL */}
   <div className="relative group">
     {isRecording ? (
@@ -1739,7 +2375,7 @@ const App: React.FC = () => {
 	    </div>
 	  )}
 </div>
-          <div className="w-full max-w-3xl p-7 rounded-[3rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 backdrop-blur-3xl shadow-2xl grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="w-full max-w-5xl p-7 rounded-[3rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 backdrop-blur-3xl shadow-2xl grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
             <div className="space-y-2">
               <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest ml-4">Input</label>
               <select
@@ -1749,6 +2385,31 @@ const App: React.FC = () => {
               >
                 <option>Studio Mic</option>
                 <option>System Audio</option>
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between px-1">
+                <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest ml-3">Mic Device</label>
+                <button
+                  type="button"
+                  onClick={() => void refreshAudioInputs()}
+                  className="text-[9px] font-black uppercase tracking-widest text-indigo-500 hover:text-indigo-400"
+                >
+                  Refresh
+                </button>
+              </div>
+              <select
+                value={selectedMicDeviceId}
+                onChange={(e) => setSelectedMicDeviceId(e.target.value)}
+                className="w-full bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white border-none rounded-2xl p-4 text-[11px] font-black uppercase tracking-widest outline-none focus:ring-1 ring-indigo-500"
+              >
+                <option value="default">System Default</option>
+                {audioInputDevices.map((device, index) => (
+                  <option key={device.deviceId || `mic-${index}`} value={device.deviceId}>
+                    {(device.label || `Microphone ${index + 1}`).slice(0, 42)}
+                  </option>
+                ))}
               </select>
             </div>
 

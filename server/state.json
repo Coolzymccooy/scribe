@@ -4,8 +4,8 @@
     "google": null
   },
   "autoListenStore": {
-    "enabled": false,
-    "leadMinutes": 2,
+    "enabled": true,
+    "leadMinutes": 1,
     "providers": [
       "google",
       "microsoft"
@@ -14,47 +14,53 @@
   "analyticsStore": {
     "endpoints": {
       "calendarUpcoming": {
-        "count": 16,
-        "totalDurationMs": 1,
+        "count": 67,
+        "totalDurationMs": 5,
         "errors": 0,
         "lastError": null
       },
       "autoListenSettings": {
-        "count": 15,
-        "totalDurationMs": 3,
+        "count": 55,
+        "totalDurationMs": 9,
         "errors": 0,
         "lastError": null
       },
       "support": {
-        "count": 1,
-        "totalDurationMs": 4238,
+        "count": 2,
+        "totalDurationMs": 7098,
         "errors": 0,
         "lastError": null
       },
       "transcribe": {
-        "count": 1,
-        "totalDurationMs": 9067,
+        "count": 9,
+        "totalDurationMs": 172854,
         "errors": 0,
         "lastError": null
       },
       "analyze": {
-        "count": 1,
-        "totalDurationMs": 4489,
+        "count": 9,
+        "totalDurationMs": 47618,
         "errors": 0,
         "lastError": null
       },
       "audioRecap": {
+        "count": 2,
+        "totalDurationMs": 21081,
+        "errors": 0,
+        "lastError": null
+      },
+      "draftEmail": {
         "count": 1,
-        "totalDurationMs": 8204,
+        "totalDurationMs": 5002,
         "errors": 0,
         "lastError": null
       }
     },
     "autoListen": {
-      "toggles": 15,
-      "calendarSyncs": 16,
+      "toggles": 55,
+      "calendarSyncs": 67,
       "calendarErrors": 0,
-      "lastUpdated": "2026-01-31T22:53:37.946Z"
+      "lastUpdated": "2026-02-15T16:28:45.946Z"
     }
   }
 }

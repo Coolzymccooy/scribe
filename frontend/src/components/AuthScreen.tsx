@@ -1,0 +1,264 @@
+import React, { useMemo, useState } from "react";
+
+type AuthMode = "signin" | "signup" | "reset";
+
+type AuthScreenProps = {
+  isBusy: boolean;
+  error: string | null;
+  notice: string | null;
+  firebaseConfigured: boolean;
+  onGoogleSignIn: () => void;
+  onEmailSignIn: (email: string, password: string) => Promise<void>;
+  onEmailSignUp: (email: string, password: string) => Promise<void>;
+  onResetPassword: (email: string) => Promise<void>;
+};
+
+const GoogleIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" className="w-5 h-5" aria-hidden="true">
+    <path
+      fill="#EA4335"
+      d="M12 10.2v3.9h5.4c-.2 1.2-1.4 3.6-5.4 3.6-3.2 0-5.9-2.7-5.9-6s2.7-6 5.9-6c1.8 0 3.1.8 3.8 1.5l2.6-2.5C16.9 3.4 14.7 2.5 12 2.5 6.9 2.5 2.8 6.6 2.8 11.7s4.1 9.2 9.2 9.2c5.3 0 8.8-3.7 8.8-9 0-.6-.1-1.1-.2-1.7H12z"
+    />
+    <path fill="#34A853" d="M2.8 16.5l3-2.3c.8 1.8 2.6 3.1 4.9 3.1 3 0 4.8-2 5.4-3.6h4.2v2.7c-1.8 2.8-4.8 4.5-8.3 4.5-3.6 0-6.8-2-8.3-4.4z" />
+    <path fill="#4A90E2" d="M20.8 11.7c0-.6-.1-1.1-.2-1.7H12v3.9h5.4c-.2 1.2-.9 2.2-1.8 2.8l2.9 2.2c1.7-1.6 2.3-3.9 2.3-7.2z" />
+    <path fill="#FBBC05" d="M2.8 7.1c-.6 1.3-.9 2.8-.9 4.6s.3 3.3.9 4.6l3-2.3c-.2-.6-.3-1.2-.3-2.3s.1-1.8.3-2.3l-3-2.3z" />
+  </svg>
+);
+
+const AuthScreen: React.FC<AuthScreenProps> = ({
+  isBusy,
+  error,
+  notice,
+  firebaseConfigured,
+  onGoogleSignIn,
+  onEmailSignIn,
+  onEmailSignUp,
+  onResetPassword,
+}) => {
+  const [mode, setMode] = useState<AuthMode>("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const modeLabel = useMemo(() => {
+    if (mode === "signup") return "Create your account";
+    if (mode === "reset") return "Reset your password";
+    return "Welcome back";
+  }, [mode]);
+
+  const submitLabel = useMemo(() => {
+    if (mode === "signup") return "Create account";
+    if (mode === "reset") return "Send reset email";
+    return "Sign in";
+  }, [mode]);
+
+  const disabled = isBusy || !firebaseConfigured;
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLocalError(null);
+
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail) {
+      setLocalError("Email is required.");
+      return;
+    }
+
+    if (mode === "reset") {
+      await onResetPassword(normalizedEmail);
+      return;
+    }
+
+    if (!password.trim()) {
+      setLocalError("Password is required.");
+      return;
+    }
+
+    if (mode === "signup") {
+      if (password.length < 6) {
+        setLocalError("Password must be at least 6 characters.");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setLocalError("Passwords do not match.");
+        return;
+      }
+      await onEmailSignUp(normalizedEmail, password);
+      return;
+    }
+
+    await onEmailSignIn(normalizedEmail, password);
+  };
+
+  const tabButtonClass = (tab: AuthMode) =>
+    `px-4 h-10 rounded-xl text-xs font-bold tracking-wide transition ${
+      mode === tab
+        ? "bg-slate-900 text-white shadow-[0_12px_24px_-14px_rgba(15,23,42,0.85)]"
+        : "text-slate-600 hover:text-slate-900"
+    }`;
+
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-900 overflow-hidden relative">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_0%_15%,rgba(20,184,166,0.2),transparent_38%),radial-gradient(circle_at_95%_0%,rgba(14,165,233,0.16),transparent_40%),linear-gradient(165deg,#f8fafc_0%,#e2e8f0_45%,#f1f5f9_100%)]" />
+
+      <div className="relative z-10 min-h-screen flex items-center justify-center p-5 md:p-8">
+        <div className="w-full max-w-6xl rounded-[2.2rem] border border-slate-300/70 bg-white/90 backdrop-blur-xl overflow-hidden shadow-[0_45px_110px_-50px_rgba(15,23,42,0.8)]">
+          <div className="grid lg:grid-cols-[1.15fr,1fr]">
+            <section className="relative p-7 md:p-12 bg-slate-950 text-white">
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_10%_12%,rgba(45,212,191,0.22),transparent_40%),radial-gradient(circle_at_86%_85%,rgba(14,165,233,0.2),transparent_45%)]" />
+              <div className="relative z-10 space-y-10">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-teal-300 to-sky-400 text-slate-950 flex items-center justify-center text-2xl font-black">
+                  S
+                </div>
+                <div className="space-y-5 font-tech-display">
+                  <p className="text-[11px] uppercase tracking-[0.36em] font-semibold text-cyan-200">ScribeAI Access</p>
+                  <h1 className="text-4xl md:text-5xl font-extrabold leading-[1.03] tracking-tight">
+                    Capture the full meeting, not just one side.
+                  </h1>
+                  <p className="text-cyan-50/80 text-base max-w-md leading-relaxed font-medium">
+                    Use Google or email login to secure your workspace and keep recording settings synced.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-[11px] font-semibold">
+                  <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
+                    <p className="text-cyan-200 uppercase tracking-[0.22em] text-[10px] font-bold">Input health</p>
+                    <p className="mt-1 text-slate-100">Mic + system diagnostics panel included.</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
+                    <p className="text-cyan-200 uppercase tracking-[0.22em] text-[10px] font-bold">Recovery</p>
+                    <p className="mt-1 text-slate-100">Forgot password reset is built in.</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="p-7 md:p-12">
+              <div className="space-y-6">
+                <div className="inline-flex rounded-2xl bg-slate-100 p-1">
+                  <button type="button" className={tabButtonClass("signin")} onClick={() => setMode("signin")} disabled={isBusy}>
+                    Sign in
+                  </button>
+                  <button type="button" className={tabButtonClass("signup")} onClick={() => setMode("signup")} disabled={isBusy}>
+                    Create account
+                  </button>
+                  <button type="button" className={tabButtonClass("reset")} onClick={() => setMode("reset")} disabled={isBusy}>
+                    Reset
+                  </button>
+                </div>
+
+                <div className="space-y-1">
+                  <h2 className="text-2xl md:text-3xl font-black tracking-tight text-slate-900">{modeLabel}</h2>
+                  <p className="text-slate-500 text-sm font-semibold">
+                    {mode === "reset"
+                      ? "Enter your email and we'll send a reset link."
+                      : "Use email/password or continue with Google."}
+                  </p>
+                </div>
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] uppercase tracking-[0.24em] font-bold text-slate-500">Email</label>
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@company.com"
+                      className="w-full h-12 px-4 rounded-xl border border-slate-300 bg-white text-sm font-semibold outline-none focus:border-sky-500"
+                      disabled={disabled}
+                    />
+                  </div>
+
+                  {mode !== "reset" && (
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] uppercase tracking-[0.24em] font-bold text-slate-500">Password</label>
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full h-12 px-4 rounded-xl border border-slate-300 bg-white text-sm font-semibold outline-none focus:border-sky-500"
+                        disabled={disabled}
+                      />
+                    </div>
+                  )}
+
+                  {mode === "signup" && (
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] uppercase tracking-[0.24em] font-bold text-slate-500">Confirm password</label>
+                      <input
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Repeat password"
+                        className="w-full h-12 px-4 rounded-xl border border-slate-300 bg-white text-sm font-semibold outline-none focus:border-sky-500"
+                        disabled={disabled}
+                      />
+                    </div>
+                  )}
+
+                  {mode === "signin" && (
+                    <button
+                      type="button"
+                      onClick={() => setMode("reset")}
+                      className="text-[12px] font-bold text-sky-700 hover:text-sky-800"
+                      disabled={isBusy}
+                    >
+                      Forgot password?
+                    </button>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={disabled}
+                    className={`w-full h-12 rounded-xl text-sm font-black tracking-wide transition ${
+                      disabled
+                        ? "bg-slate-300 text-slate-500 cursor-not-allowed"
+                        : "bg-slate-900 text-white hover:bg-slate-800"
+                    }`}
+                  >
+                    {isBusy ? "Please wait..." : submitLabel}
+                  </button>
+                </form>
+
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t border-slate-300" />
+                  </div>
+                  <div className="relative flex justify-center text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">
+                    <span className="px-3 bg-white">or</span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={onGoogleSignIn}
+                  className={`w-full h-12 rounded-xl border text-sm font-bold tracking-wide flex items-center justify-center gap-3 transition ${
+                    disabled
+                      ? "bg-slate-200 border-slate-300 text-slate-500 cursor-not-allowed"
+                      : "bg-white text-slate-900 border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  <GoogleIcon />
+                  Continue with Google
+                </button>
+
+                {!firebaseConfigured && (
+                  <p className="text-amber-700 text-xs font-semibold">
+                    Firebase env variables are missing in `frontend/.env.local`.
+                  </p>
+                )}
+                {localError && <p className="text-rose-700 text-xs font-semibold">{localError}</p>}
+                {error && <p className="text-rose-700 text-xs font-semibold">{error}</p>}
+                {notice && <p className="text-emerald-700 text-xs font-semibold">{notice}</p>}
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default AuthScreen;

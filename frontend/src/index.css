@@ -24,6 +24,13 @@ html, body {
   font-family: "Space Grotesk", Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
+h1,
+h2,
+h3 {
+  font-family: "Oxanium", "Space Grotesk", sans-serif;
+  letter-spacing: -0.015em;
+}
+
 
 :root {
   --bg-deep: #020617;
@@ -212,9 +219,20 @@ button {
   font-weight: 700;
 }
 
+button,
 input,
 select,
 textarea {
-  font-family: "JetBrains Mono", "Space Grotesk", sans-serif;
+  font-family: inherit;
   font-size: 12px;
+}
+
+@media (max-width: 768px) {
+  :root {
+    font-size: 13px;
+  }
+
+  .machine-panel {
+    border-radius: 1.25rem;
+  }
 }

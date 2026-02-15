@@ -14,14 +14,14 @@
   "analyticsStore": {
     "endpoints": {
       "calendarUpcoming": {
-        "count": 67,
-        "totalDurationMs": 5,
+        "count": 85,
+        "totalDurationMs": 7,
         "errors": 0,
         "lastError": null
       },
       "autoListenSettings": {
-        "count": 55,
-        "totalDurationMs": 9,
+        "count": 60,
+        "totalDurationMs": 10,
         "errors": 0,
         "lastError": null
       },
@@ -57,10 +57,10 @@
       }
     },
     "autoListen": {
-      "toggles": 55,
-      "calendarSyncs": 67,
+      "toggles": 60,
+      "calendarSyncs": 85,
       "calendarErrors": 0,
-      "lastUpdated": "2026-02-15T16:28:45.946Z"
+      "lastUpdated": "2026-02-15T18:47:51.398Z"
     }
   }
 }

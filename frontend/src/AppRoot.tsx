@@ -19,7 +19,6 @@ const AppRoot: React.FC = () => {
   const [isBusy, setIsBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
-  const [showLandingPreview, setShowLandingPreview] = useState(false);
 
   useEffect(() => {
     let isDisposed = false;
@@ -40,7 +39,6 @@ const AppRoot: React.FC = () => {
       if (isDisposed) return;
       setCurrentUser(user);
       setAuthReady(true);
-      if (user) setShowLandingPreview(false);
     });
 
     return () => {
@@ -128,30 +126,12 @@ const AppRoot: React.FC = () => {
   }
 
   if (!currentUser) {
-    if (showLandingPreview) {
-      return (
-        <>
-          <div className="fixed top-4 right-4 z-[80]">
-            <button
-              type="button"
-              onClick={() => setShowLandingPreview(false)}
-              className="px-3 py-2 rounded-xl border border-white/15 bg-slate-900/85 text-white text-[10px] font-black uppercase tracking-[0.14em] backdrop-blur-xl shadow-2xl"
-            >
-              Back to sign in
-            </button>
-          </div>
-          <App />
-        </>
-      );
-    }
-
     return (
       <AuthScreen
         isBusy={isBusy}
         error={authError}
         notice={authNotice}
         firebaseConfigured={isFirebaseConfigured}
-        onLogoClick={() => setShowLandingPreview(true)}
         onGoogleSignIn={handleGoogleSignIn}
         onEmailSignIn={handleEmailSignIn}
         onEmailSignUp={handleEmailSignUp}

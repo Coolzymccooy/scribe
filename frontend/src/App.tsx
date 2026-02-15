@@ -320,35 +320,49 @@ const stopStreamSafely = (stream: MediaStream | null) => {
   });
 };
 
-const MIC_CONFIDENCE_THRESHOLD = 0.12;
+const MIC_CONFIDENCE_THRESHOLD = 0.1;
 const SYSTEM_CONFIDENCE_THRESHOLD = 0.12;
-const CONFIDENCE_HOLD_MS = 1200;
+const CONFIDENCE_HOLD_MS = 900;
+const MIC_DIAGNOSTIC_GAIN = 2.4;
+const MIC_RECORDING_GAIN = 2.8;
+const SYSTEM_RECORDING_GAIN = 0.78;
+const MIX_BUS_GAIN = 0.92;
 
 const getAnalyserLevel = (analyser: AnalyserNode | null) => {
   if (!analyser) return 0;
 
-  const timeDomain = new Uint8Array(analyser.fftSize);
-  analyser.getByteTimeDomainData(timeDomain);
+  const floatDomain = new Float32Array(analyser.fftSize);
+  if (typeof analyser.getFloatTimeDomainData === "function") {
+    analyser.getFloatTimeDomainData(floatDomain);
+  } else {
+    const timeDomain = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(timeDomain);
+    for (let i = 0; i < timeDomain.length; i++) {
+      floatDomain[i] = (timeDomain[i] - 128) / 128;
+    }
+  }
 
   let sumSquares = 0;
-  for (let i = 0; i < timeDomain.length; i++) {
-    const normalized = (timeDomain[i] - 128) / 128;
-    sumSquares += normalized * normalized;
+  for (let i = 0; i < floatDomain.length; i++) {
+    const sample = floatDomain[i];
+    sumSquares += sample * sample;
   }
-  const rms = Math.sqrt(sumSquares / timeDomain.length);
+  const rms = Math.sqrt(sumSquares / floatDomain.length);
+  const rmsDb = 20 * Math.log10(Math.max(rms, 0.00001));
+  const rmsNormalized = Math.max(0, Math.min(1, (rmsDb + 72) / 52));
 
   const freqDomain = new Uint8Array(analyser.frequencyBinCount);
   analyser.getByteFrequencyData(freqDomain);
+
   let spectralSum = 0;
-  for (let i = 0; i < freqDomain.length; i++) {
+  for (let i = 2; i < freqDomain.length; i++) {
     spectralSum += freqDomain[i];
   }
-  const spectralAverage = spectralSum / (freqDomain.length * 255);
+  const spectralAverage = spectralSum / (Math.max(1, freqDomain.length - 2) * 255);
+  const spectralNormalized = Math.max(0, Math.min(1, (spectralAverage - 0.012) * 4.6));
 
-  const rmsBoosted = Math.max(0, (rms - 0.002) * 82);
-  const spectralBoosted = Math.max(0, (spectralAverage - 0.006) * 9.5);
-
-  return Math.max(0, Math.min(1, Math.max(rmsBoosted, spectralBoosted)));
+  const blended = Math.max(rmsNormalized, spectralNormalized * 0.88);
+  return Math.max(0, Math.min(1, blended));
 };
 
 const buildMicAudioConstraints = (deviceId: string, rawCapture: boolean): MediaTrackConstraints => ({
@@ -1000,8 +1014,8 @@ const App: React.FC = () => {
     }
 
     const attempts: MediaStreamConstraints[] = [
-      { audio: buildMicAudioConstraints(selectedMicDeviceId, true) },
       { audio: buildMicAudioConstraints(selectedMicDeviceId, false) },
+      { audio: buildMicAudioConstraints(selectedMicDeviceId, true) },
       { audio: true },
     ];
 
@@ -1169,12 +1183,26 @@ const App: React.FC = () => {
       }
 
       const micSource = ctx.createMediaStreamSource(micStream);
+      const micHighPass = ctx.createBiquadFilter();
+      micHighPass.type = "highpass";
+      micHighPass.frequency.value = 90;
+      const micCompressor = ctx.createDynamicsCompressor();
+      micCompressor.threshold.value = -35;
+      micCompressor.knee.value = 22;
+      micCompressor.ratio.value = 3;
+      micCompressor.attack.value = 0.003;
+      micCompressor.release.value = 0.24;
+      const micGain = ctx.createGain();
+      micGain.gain.value = MIC_DIAGNOSTIC_GAIN;
       const micAnalyser = ctx.createAnalyser();
       micAnalyser.fftSize = 1024;
       micAnalyser.smoothingTimeConstant = 0.72;
-      micAnalyser.minDecibels = -95;
-      micAnalyser.maxDecibels = -15;
-      micSource.connect(micAnalyser);
+      micAnalyser.minDecibels = -96;
+      micAnalyser.maxDecibels = -6;
+      micSource.connect(micHighPass);
+      micHighPass.connect(micCompressor);
+      micCompressor.connect(micGain);
+      micGain.connect(micAnalyser);
       diagnosticsMicSourceRef.current = micSource;
       diagnosticsMicAnalyserRef.current = micAnalyser;
 
@@ -1597,19 +1625,40 @@ const App: React.FC = () => {
 
       // 3. Create the Destination (The single mixed stream we will record)
       const destination = ctx.createMediaStreamDestination();
+      const mixBus = ctx.createGain();
+      mixBus.gain.value = MIX_BUS_GAIN;
+      mixBus.connect(destination);
 
       // 4. Add Microphone to Mix
       const micSource = ctx.createMediaStreamSource(micStream);
-      micSource.connect(destination);
+      const micHighPass = ctx.createBiquadFilter();
+      micHighPass.type = "highpass";
+      micHighPass.frequency.value = 90;
+      const micCompressor = ctx.createDynamicsCompressor();
+      micCompressor.threshold.value = -36;
+      micCompressor.knee.value = 24;
+      micCompressor.ratio.value = 3.2;
+      micCompressor.attack.value = 0.003;
+      micCompressor.release.value = 0.22;
+      const micGain = ctx.createGain();
+      micGain.gain.value = MIC_RECORDING_GAIN;
+      micSource.connect(micHighPass);
+      micHighPass.connect(micCompressor);
+      micCompressor.connect(micGain);
+      micGain.connect(mixBus);
 
       // 5. Add System Audio to Mix (if shared)
       const currentDisplayStream = displayStreamRef.current;
       if (shareMeetingAudio && currentDisplayStream) {
         try {
-          if (currentDisplayStream.getAudioTracks().length > 0) {
-             const systemSource = ctx.createMediaStreamSource(currentDisplayStream);
-             systemSource.connect(destination); // To Recorder
-             // systemSource.connect(analyser); // Optional: if you want to visualize system audio too
+          const displayAudioTracks = currentDisplayStream.getAudioTracks();
+          if (displayAudioTracks.length > 0) {
+             const systemStream = new MediaStream(displayAudioTracks);
+             const systemSource = ctx.createMediaStreamSource(systemStream);
+             const systemGain = ctx.createGain();
+             systemGain.gain.value = SYSTEM_RECORDING_GAIN;
+             systemSource.connect(systemGain);
+             systemGain.connect(mixBus);
           }
         } catch (err) {
           console.warn("Could not mix system audio", err);
@@ -1631,14 +1680,20 @@ const App: React.FC = () => {
       // --- END BACKGROUND HACK ---
 
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.72;
+      analyser.minDecibels = -96;
+      analyser.maxDecibels = -6;
       analyserRef.current = analyser;
       
       // FIX: Connect SOURCE to Analyser, NOT the Destination node
-      micSource.connect(analyser); 
+      micGain.connect(analyser); 
 
       const recordingStream = destination.stream;
-      const mediaRecorder = new MediaRecorder(recordingStream);
+      const supportedMimeType = getSupportedRecordingMimeType();
+      const mediaRecorder = supportedMimeType
+        ? new MediaRecorder(recordingStream, { mimeType: supportedMimeType })
+        : new MediaRecorder(recordingStream);
       mediaRecorderRef.current = mediaRecorder;
       recordingMimeTypeRef.current = mediaRecorder.mimeType || "audio/webm";
       audioChunksRef.current = [];

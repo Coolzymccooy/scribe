@@ -7,7 +7,6 @@ type AuthScreenProps = {
   error: string | null;
   notice: string | null;
   firebaseConfigured: boolean;
-  onLogoClick?: () => void;
   onGoogleSignIn: () => void;
   onEmailSignIn: (email: string, password: string) => Promise<void>;
   onEmailSignUp: (email: string, password: string) => Promise<void>;
@@ -31,7 +30,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({
   error,
   notice,
   firebaseConfigured,
-  onLogoClick,
   onGoogleSignIn,
   onEmailSignIn,
   onEmailSignUp,
@@ -115,11 +113,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({
                   onClick={() => {
                     setMode("signin");
                     setLocalError(null);
-                    onLogoClick?.();
                   }}
                   className="group inline-flex items-center gap-3"
-                  title="Go to landing page"
-                  aria-label="Go to landing page"
+                  title="Return to sign in"
+                  aria-label="Return to sign in"
                 >
                   <div className="w-14 h-14 max-[360px]:w-11 max-[360px]:h-11 rounded-2xl bg-gradient-to-br from-teal-300 to-sky-400 text-slate-950 flex items-center justify-center text-2xl max-[360px]:text-xl font-black transition-transform group-hover:scale-105">
                     S

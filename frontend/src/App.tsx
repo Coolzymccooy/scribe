@@ -1577,20 +1577,15 @@ const App: React.FC = () => {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   const startRecording = useCallback(async () => {
+    if (isRecording || isProcessing) return;
     try {
-      // 1. Get Mic Permission FIRST (Critical)
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      // 2. Request Wake Lock (Non-blocking)
-      try {
-         // @ts-ignore
-         if ('wakeLock' in navigator) {
-             const lock = await navigator.wakeLock.request('screen');
-             console.log("Wake Lock acquired");
-         }
-      } catch (e) {
-         console.warn("Wake lock failed (ignoring):", e);
+      // Use the same mic acquisition path as diagnostics to avoid input drift.
+      const micStream = await requestMicStream();
+      const micTrack = micStream.getAudioTracks()[0];
+      if (!micTrack) {
+        throw new Error("No microphone track available. Check browser microphone permissions.");
       }
+      micStreamRef.current = micStream;
 
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = ctx;
@@ -1608,10 +1603,11 @@ const App: React.FC = () => {
       micSource.connect(destination);
 
       // 5. Add System Audio to Mix (if shared)
-      if (shareMeetingAudio && displayStream) {
+      const currentDisplayStream = displayStreamRef.current;
+      if (shareMeetingAudio && currentDisplayStream) {
         try {
-          if (displayStream.getAudioTracks().length > 0) {
-             const systemSource = ctx.createMediaStreamSource(displayStream);
+          if (currentDisplayStream.getAudioTracks().length > 0) {
+             const systemSource = ctx.createMediaStreamSource(currentDisplayStream);
              systemSource.connect(destination); // To Recorder
              // systemSource.connect(analyser); // Optional: if you want to visualize system audio too
           }
@@ -1680,7 +1676,7 @@ const App: React.FC = () => {
       const message = err instanceof Error ? err.message : "Microphone access is required for ScribeAI.";
       showToast(message, "info");
     }
-  }, [cleanupRecordingResources, displayStream, requestWakeLock, shareMeetingAudio, showToast]);
+  }, [cleanupRecordingResources, isProcessing, isRecording, requestMicStream, requestWakeLock, shareMeetingAudio, showToast]);
 
   const stopRecording = useCallback(async () => {
     const recorder = mediaRecorderRef.current;
@@ -2054,13 +2050,22 @@ const App: React.FC = () => {
                   <div className="text-amber-500 font-black text-xs uppercase tracking-widest">Crash Detected</div>
                   <div className="text-slate-300 text-xs mt-1">Found {sortedRecoverySessions.length} unfinished recording(s).</div>
                 </div>
-                <button 
-                  onClick={() => void recoverSession(latestRecoverySessionId)}
-                  disabled={Boolean(restoringSessionId)}
-                  className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wide transition disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {restoringSessionId === latestRecoverySessionId ? "Restoring..." : "Recover"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => void recoverSession(latestRecoverySessionId)}
+                    disabled={Boolean(restoringSessionId)}
+                    className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wide transition disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {restoringSessionId === latestRecoverySessionId ? "Restoring..." : "Recover"}
+                  </button>
+                  <button
+                    onClick={() => void discardRecoverySession(latestRecoverySessionId)}
+                    disabled={Boolean(restoringSessionId)}
+                    className="border border-amber-500/40 text-amber-200 px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wide transition hover:bg-amber-500/10 disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    Dismiss
+                  </button>
+                </div>
               </div>
             )}
             

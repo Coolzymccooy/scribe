@@ -1690,7 +1690,7 @@ const App: React.FC = () => {
       micGain.connect(analyser); 
 
       const recordingStream = destination.stream;
-      const supportedMimeType = getSupportedRecordingMimeType();
+      const supportedMimeType = pickRecorderMimeType();
       const mediaRecorder = supportedMimeType
         ? new MediaRecorder(recordingStream, { mimeType: supportedMimeType })
         : new MediaRecorder(recordingStream);

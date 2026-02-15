@@ -19,6 +19,7 @@ const AppRoot: React.FC = () => {
   const [isBusy, setIsBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [showLandingPreview, setShowLandingPreview] = useState(false);
 
   useEffect(() => {
     let isDisposed = false;
@@ -39,6 +40,7 @@ const AppRoot: React.FC = () => {
       if (isDisposed) return;
       setCurrentUser(user);
       setAuthReady(true);
+      if (user) setShowLandingPreview(false);
     });
 
     return () => {
@@ -126,12 +128,30 @@ const AppRoot: React.FC = () => {
   }
 
   if (!currentUser) {
+    if (showLandingPreview) {
+      return (
+        <>
+          <div className="fixed top-4 right-4 z-[80]">
+            <button
+              type="button"
+              onClick={() => setShowLandingPreview(false)}
+              className="px-3 py-2 rounded-xl border border-white/15 bg-slate-900/85 text-white text-[10px] font-black uppercase tracking-[0.14em] backdrop-blur-xl shadow-2xl"
+            >
+              Back to sign in
+            </button>
+          </div>
+          <App />
+        </>
+      );
+    }
+
     return (
       <AuthScreen
         isBusy={isBusy}
         error={authError}
         notice={authNotice}
         firebaseConfigured={isFirebaseConfigured}
+        onLogoClick={() => setShowLandingPreview(true)}
         onGoogleSignIn={handleGoogleSignIn}
         onEmailSignIn={handleEmailSignIn}
         onEmailSignUp={handleEmailSignUp}
@@ -142,15 +162,15 @@ const AppRoot: React.FC = () => {
 
   return (
     <>
-      <div className="fixed top-4 right-4 z-[70] flex items-center gap-3 px-3 py-2 rounded-xl border border-white/10 bg-slate-900/80 text-white backdrop-blur-xl shadow-2xl">
-        <div className="max-w-[160px] truncate text-[11px] font-black uppercase tracking-[0.2em] text-cyan-100">
+      <div className="fixed top-4 right-4 max-[360px]:top-2 max-[360px]:right-2 z-[70] flex items-center gap-3 max-[360px]:gap-2 px-3 max-[360px]:px-2 py-2 max-[360px]:py-1.5 rounded-xl border border-white/10 bg-slate-900/80 text-white backdrop-blur-xl shadow-2xl max-[360px]:max-w-[95vw]">
+        <div className="max-w-[160px] max-[360px]:max-w-[110px] truncate text-[11px] max-[360px]:text-[9px] font-black uppercase tracking-[0.2em] max-[360px]:tracking-[0.12em] text-cyan-100">
           {currentUser.displayName || currentUser.email || "Google User"}
         </div>
         <button
           type="button"
           onClick={handleSignOut}
           disabled={isBusy}
-          className="px-3 py-1.5 rounded-lg bg-white text-slate-900 text-[10px] font-black uppercase tracking-widest disabled:opacity-60"
+          className="px-3 max-[360px]:px-2 py-1.5 max-[360px]:py-1 rounded-lg bg-white text-slate-900 text-[10px] max-[360px]:text-[9px] font-black uppercase tracking-widest max-[360px]:tracking-[0.12em] disabled:opacity-60"
         >
           Sign out
         </button>

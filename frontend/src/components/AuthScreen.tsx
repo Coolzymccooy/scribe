@@ -7,6 +7,7 @@ type AuthScreenProps = {
   error: string | null;
   notice: string | null;
   firebaseConfigured: boolean;
+  onLogoClick?: () => void;
   onGoogleSignIn: () => void;
   onEmailSignIn: (email: string, password: string) => Promise<void>;
   onEmailSignUp: (email: string, password: string) => Promise<void>;
@@ -30,6 +31,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({
   error,
   notice,
   firebaseConfigured,
+  onLogoClick,
   onGoogleSignIn,
   onEmailSignIn,
   onEmailSignUp,
@@ -92,7 +94,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({
   };
 
   const tabButtonClass = (tab: AuthMode) =>
-    `px-4 h-10 rounded-xl text-xs font-bold tracking-wide transition ${
+    `px-4 max-[360px]:px-2 flex-1 h-10 max-[360px]:h-9 rounded-xl text-xs max-[360px]:text-[10px] font-bold tracking-wide max-[360px]:tracking-normal transition ${
       mode === tab
         ? "bg-slate-900 text-white shadow-[0_12px_24px_-14px_rgba(15,23,42,0.85)]"
         : "text-slate-600 hover:text-slate-900"
@@ -102,40 +104,57 @@ const AuthScreen: React.FC<AuthScreenProps> = ({
     <div className="min-h-screen bg-slate-100 text-slate-900 overflow-hidden relative">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_0%_15%,rgba(20,184,166,0.2),transparent_38%),radial-gradient(circle_at_95%_0%,rgba(14,165,233,0.16),transparent_40%),linear-gradient(165deg,#f8fafc_0%,#e2e8f0_45%,#f1f5f9_100%)]" />
 
-      <div className="relative z-10 min-h-screen flex items-center justify-center p-5 md:p-8">
-        <div className="w-full max-w-6xl rounded-[2.2rem] border border-slate-300/70 bg-white/90 backdrop-blur-xl overflow-hidden shadow-[0_45px_110px_-50px_rgba(15,23,42,0.8)]">
+      <div className="relative z-10 min-h-screen flex items-center justify-center p-5 max-[360px]:p-2.5 md:p-8">
+        <div className="w-full max-w-6xl rounded-[2.2rem] max-[360px]:rounded-2xl border border-slate-300/70 bg-white/90 backdrop-blur-xl overflow-hidden shadow-[0_45px_110px_-50px_rgba(15,23,42,0.8)]">
           <div className="grid lg:grid-cols-[1.15fr,1fr]">
-            <section className="relative p-7 md:p-12 bg-slate-950 text-white">
+            <section className="relative p-7 max-[360px]:p-4 md:p-12 bg-slate-950 text-white">
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_10%_12%,rgba(45,212,191,0.22),transparent_40%),radial-gradient(circle_at_86%_85%,rgba(14,165,233,0.2),transparent_45%)]" />
-              <div className="relative z-10 space-y-10">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-teal-300 to-sky-400 text-slate-950 flex items-center justify-center text-2xl font-black">
-                  S
-                </div>
+              <div className="relative z-10 space-y-10 max-[360px]:space-y-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("signin");
+                    setLocalError(null);
+                    onLogoClick?.();
+                  }}
+                  className="group inline-flex items-center gap-3"
+                  title="Go to landing page"
+                  aria-label="Go to landing page"
+                >
+                  <div className="w-14 h-14 max-[360px]:w-11 max-[360px]:h-11 rounded-2xl bg-gradient-to-br from-teal-300 to-sky-400 text-slate-950 flex items-center justify-center text-2xl max-[360px]:text-xl font-black transition-transform group-hover:scale-105">
+                    S
+                  </div>
+                  <span className="font-tech-label text-[10px] uppercase tracking-[0.22em] text-cyan-100/90">Landing</span>
+                </button>
                 <div className="space-y-5 font-tech-display">
                   <p className="text-[11px] uppercase tracking-[0.36em] font-semibold text-cyan-200">ScribeAI Access</p>
-                  <h1 className="text-4xl md:text-5xl font-extrabold leading-[1.03] tracking-tight">
+                  <h1 className="text-4xl max-[360px]:text-3xl md:text-5xl font-extrabold leading-[1.03] tracking-tight">
                     Capture the full meeting, not just one side.
                   </h1>
-                  <p className="text-cyan-50/80 text-base max-w-md leading-relaxed font-medium">
-                    Use Google or email login to secure your workspace and keep recording settings synced.
+                  <p className="text-cyan-50/80 text-base max-[360px]:text-sm max-w-md leading-relaxed font-medium">
+                    ScribeAI records mic + meeting audio, runs speaker-aware transcription, and returns structured summaries with actions and decisions.
                   </p>
                 </div>
-                <div className="grid grid-cols-2 gap-3 text-[11px] font-semibold">
+                <div className="grid grid-cols-2 max-[360px]:grid-cols-1 gap-3 text-[11px] font-semibold">
                   <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                    <p className="text-cyan-200 uppercase tracking-[0.22em] text-[10px] font-bold">Input health</p>
-                    <p className="mt-1 text-slate-100">Mic + system diagnostics panel included.</p>
+                    <p className="text-cyan-200 uppercase tracking-[0.22em] text-[10px] font-bold">Dual capture</p>
+                    <p className="mt-1 text-slate-100">Mic and remote speaker channels are validated before recording.</p>
                   </div>
                   <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-                    <p className="text-cyan-200 uppercase tracking-[0.22em] text-[10px] font-bold">Recovery</p>
-                    <p className="mt-1 text-slate-100">Forgot password reset is built in.</p>
+                    <p className="text-cyan-200 uppercase tracking-[0.22em] text-[10px] font-bold">Session recovery</p>
+                    <p className="mt-1 text-slate-100">Interrupted sessions can be restored from autosaved chunks.</p>
+                  </div>
+                  <div className="rounded-2xl border border-white/15 bg-white/5 p-4 col-span-2 max-[360px]:col-span-1">
+                    <p className="text-cyan-200 uppercase tracking-[0.22em] text-[10px] font-bold">Local-first security</p>
+                    <p className="mt-1 text-slate-100">Audio stays local by default; you choose when to sync or export.</p>
                   </div>
                 </div>
               </div>
             </section>
 
-            <section className="p-7 md:p-12">
-              <div className="space-y-6">
-                <div className="inline-flex rounded-2xl bg-slate-100 p-1">
+            <section className="p-7 max-[360px]:p-4 md:p-12">
+              <div className="space-y-6 max-[360px]:space-y-4">
+                <div className="inline-flex max-[360px]:w-full rounded-2xl bg-slate-100 p-1">
                   <button type="button" className={tabButtonClass("signin")} onClick={() => setMode("signin")} disabled={isBusy}>
                     Sign in
                   </button>
@@ -148,7 +167,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({
                 </div>
 
                 <div className="space-y-1">
-                  <h2 className="text-2xl md:text-3xl font-black tracking-tight text-slate-900">{modeLabel}</h2>
+                  <h2 className="text-2xl max-[360px]:text-xl md:text-3xl font-black tracking-tight text-slate-900">{modeLabel}</h2>
                   <p className="text-slate-500 text-sm font-semibold">
                     {mode === "reset"
                       ? "Enter your email and we'll send a reset link."

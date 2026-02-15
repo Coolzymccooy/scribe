@@ -32,7 +32,15 @@ import {
   askSupport,
 } from "./services/apiService";
 
-import { saveAudioBlob, getAudioBlob } from "./services/storageService";
+
+import {
+  saveAudioBlob,
+  getAudioBlob,
+  appendAudioChunk,
+  clearAudioChunks,
+  listUnfinishedSessions,
+  getAudioChunks
+} from "./services/storageService";
 
 /** -----------------------------
  * Small UI helpers
@@ -61,6 +69,13 @@ const formatTime = (seconds: number) => {
 };
 
 const formatDurationHMS = (seconds: number) => formatTime(seconds);
+
+const parseRecoverySessionTimestamp = (sessionId: string): number => {
+  const match = sessionId.match(/session_(\d+)/);
+  if (!match) return 0;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 
 const formatRecordedAt = (iso?: string) => {
   if (!iso) return "";
@@ -355,15 +370,15 @@ const SidebarItem: React.FC<{
 }> = ({ icon, label, active, onClick, tooltip }) => (
   <button
     onClick={onClick}
-    className={`group relative w-full flex items-center gap-3 p-2.5 md:p-3 rounded-xl transition-all
+    className={`machine-nav-item group relative w-full flex items-center gap-3 p-2.5 md:p-3 transition-all
       ${
         active
-          ? "bg-indigo-600/15 text-indigo-400 border border-indigo-500/20 shadow-lg"
-          : "text-slate-500 hover:text-slate-900 dark:text-slate-500 dark:hover:text-slate-100 hover:bg-slate-900/5 dark:hover:bg-white/5"
+          ? "machine-nav-item-active"
+          : ""
       }`}
   >
     <div className="transition-transform group-hover:scale-110 shrink-0">{icon}</div>
-    <span className="font-black text-[9px] md:text-[10px] uppercase tracking-widest truncate">{label}</span>
+    <span className="font-tech-label font-black text-[9px] md:text-[10px] uppercase tracking-[0.18em] truncate">{label}</span>
     <Tooltip text={tooltip} />
   </button>
 );
@@ -387,23 +402,29 @@ const Layout: React.FC<{
   }, [theme]);
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans overflow-hidden transition-colors duration-300">
+    <div className="machine-shell flex min-h-screen h-[100dvh] text-slate-100 font-sans overflow-hidden transition-colors duration-300">
       <aside
-        className={`fixed inset-y-0 left-0 w-52 md:w-60 border-r border-slate-200 dark:border-white/5 bg-white/80 dark:bg-slate-900/40 backdrop-blur-3xl flex flex-col p-6 space-y-8 z-40 transition-transform lg:relative lg:translate-x-0
+        className={`machine-sidebar fixed inset-y-0 left-0 w-48 sm:w-52 md:w-60 border-r backdrop-blur-3xl flex flex-col p-4 sm:p-5 md:p-6 space-y-6 sm:space-y-7 z-40 transition-transform lg:relative lg:translate-x-0
           ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
       >
-        <div
+        <button
+          type="button"
           onClick={() => {
             setView("landing");
             setIsMobileMenuOpen(false);
           }}
-          className="flex items-center gap-3 cursor-pointer mb-2"
+          className="group flex items-center gap-3 cursor-pointer mb-2 text-left"
+          title="Go to landing page"
+          aria-label="Go to landing page"
         >
-          <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center text-white font-black text-lg shadow-2xl">
+          <div className="w-9 h-9 machine-cta rounded-xl flex items-center justify-center text-white font-black text-base transition-transform group-hover:scale-105">
             S
           </div>
-          <span className="font-black text-xl tracking-tighter">ScribeAI</span>
-        </div>
+          <div className="min-w-0">
+            <span className="font-tech-display font-black text-xl tracking-tight text-slate-100 block leading-none">ScribeAI</span>
+            <span className="font-tech-label text-[8px] uppercase tracking-[0.2em] text-cyan-200/80">Landing</span>
+          </div>
+        </button>
 
         <nav className="flex-1 space-y-1">
           <SidebarItem
@@ -471,24 +492,35 @@ const Layout: React.FC<{
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0 z-10 overflow-hidden relative">
-        <header className="h-16 md:h-20 flex items-center justify-between px-4 md:px-10 border-b border-slate-200 dark:border-white/5 backdrop-blur-md bg-white/60 dark:bg-transparent">
-          <button
-            onClick={() => setIsMobileMenuOpen((s) => !s)}
-            className="lg:hidden p-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors"
-          >
-            <div className="w-6 h-0.5 bg-current mb-1"></div>
-            <div className="w-6 h-0.5 bg-current mb-1"></div>
-            <div className="w-6 h-0.5 bg-current"></div>
-          </button>
+        <header className="machine-topbar h-14 max-[360px]:h-12 sm:h-16 md:h-20 flex items-center justify-between px-3 max-[360px]:px-2 sm:px-4 md:px-8 border-b backdrop-blur-md">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <button
+              onClick={() => setIsMobileMenuOpen((s) => !s)}
+              className="lg:hidden p-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors"
+            >
+              <div className="w-6 h-0.5 bg-current mb-1"></div>
+              <div className="w-6 h-0.5 bg-current mb-1"></div>
+              <div className="w-6 h-0.5 bg-current"></div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("landing")}
+              className="flex items-center gap-2 rounded-xl px-2 py-1 border border-white/10 bg-white/5 hover:bg-white/10 transition"
+              title="Go to landing page"
+              aria-label="Go to landing page"
+            >
+              <span className="w-6 h-6 machine-cta rounded-md flex items-center justify-center text-white font-black text-xs">S</span>
+              <span className="hidden sm:block font-tech-display font-black text-sm tracking-tight text-slate-100">ScribeAI</span>
+            </button>
+          </div>
 
           <div className="flex-1 max-w-lg mx-4 relative hidden sm:block">
             <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-600" />
             <input
               type="text"
               placeholder="Scan neural cache..."
-              className="w-full pl-11 pr-4 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest
-                bg-slate-200/50 dark:bg-white/5 border border-slate-300 dark:border-white/5
-                focus:border-indigo-500/50 outline-none transition-all placeholder-slate-400"
+              className="machine-input w-full pl-11 pr-4 py-2.5 text-[10px] font-black uppercase tracking-[0.18em]
+                outline-none transition-all placeholder-slate-500"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -501,8 +533,8 @@ const Layout: React.FC<{
                 className={`p-2.5 rounded-full border transition-all
                   ${
                     theme === "dark"
-                      ? "bg-white/5 text-amber-400 border-white/5"
-                      : "bg-indigo-600 text-white shadow-lg border-indigo-600"
+                      ? "bg-white/5 text-amber-400 border-white/10"
+                      : "machine-cta border-sky-300/40"
                   }`}
               >
                 {theme === "dark" ? "☀️" : "🌙"}
@@ -510,10 +542,10 @@ const Layout: React.FC<{
               <Tooltip text={`Switch to ${theme === "dark" ? "Light" : "Dark"} mode`} position="bottom" />
             </div>
 
-            <div className="group relative">
+            <div className="group relative hidden sm:block">
               <button
                 onClick={() => setView("recorder")}
-                className="bg-indigo-600 px-4 md:px-6 py-2.5 rounded-full font-black text-[10px] uppercase tracking-widest text-white shadow-lg hover:bg-indigo-700 transition-all"
+                className="machine-cta px-4 md:px-5 py-2.5 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all"
               >
                 Studio Live
               </button>
@@ -522,7 +554,7 @@ const Layout: React.FC<{
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-10">{children}</div>
+        <div className="flex-1 overflow-y-auto p-3 max-[360px]:p-2.5 sm:p-4 md:p-6 lg:p-8">{children}</div>
       </main>
 
       {isMobileMenuOpen && (
@@ -533,7 +565,7 @@ const Layout: React.FC<{
       )}
 
       {toast && (
-        <div className="fixed bottom-4 right-4 px-6 py-3 rounded-2xl bg-indigo-600 text-white font-black text-[10px] uppercase tracking-widest shadow-3xl z-50 flex items-center gap-4 border border-white/10">
+        <div className="fixed bottom-4 right-4 px-5 py-2.5 rounded-xl machine-panel text-slate-100 font-tech-label text-[10px] uppercase tracking-[0.2em] shadow-3xl z-50 flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-white animate-ping"></div>
           <span>{toast.message}</span>
         </div>
@@ -742,6 +774,77 @@ const App: React.FC = () => {
   });
 
   const [toast, setToast] = useState<{ message: string; type: "success" | "info" } | null>(null);
+  const showToast = useCallback((message: string, type: "success" | "info" = "success") => {
+    setToast({ message, type });
+    window.setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  // Crash Recovery State
+  const [unfinishedSessions, setUnfinishedSessions] = useState<string[]>([]);
+  const [restoringSessionId, setRestoringSessionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    listUnfinishedSessions().then(setUnfinishedSessions);
+  }, []);
+
+  const recoverSession = async (sessionId: string) => {
+    setRestoringSessionId(sessionId);
+    try {
+      const chunks = await getAudioChunks(sessionId);
+      if (!chunks || chunks.length === 0) {
+        showToast("Session data corrupted or empty", "info");
+        await clearAudioChunks(sessionId);
+        setUnfinishedSessions(prev => prev.filter(id => id !== sessionId));
+        return;
+      }
+      
+      const blob = new Blob(chunks, { type: "audio/webm" });
+      // Treat as uploaded file for processing
+      await handleUploadAudio(new File([blob], `Recovered_${sessionId}.webm`, { type: "audio/webm" }));
+      
+      // Cleanup
+      await clearAudioChunks(sessionId);
+      setUnfinishedSessions(prev => prev.filter(id => id !== sessionId));
+      showToast("Session recovered successfully", "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Recovery failed", "info");
+    } finally {
+      setRestoringSessionId((prev) => (prev === sessionId ? null : prev));
+    }
+  };
+
+  const sortedRecoverySessions = useMemo(
+    () => [...unfinishedSessions].sort((a, b) => parseRecoverySessionTimestamp(b) - parseRecoverySessionTimestamp(a)),
+    [unfinishedSessions]
+  );
+
+  const latestRecoverySessionId = sortedRecoverySessions[0] || null;
+  const latestRecoveryTimestamp = latestRecoverySessionId ? parseRecoverySessionTimestamp(latestRecoverySessionId) : 0;
+
+  const discardRecoverySession = useCallback(
+    async (sessionId: string) => {
+      try {
+        await clearAudioChunks(sessionId);
+        setUnfinishedSessions((prev) => prev.filter((id) => id !== sessionId));
+        showToast("Saved recovery session discarded", "info");
+      } catch {
+        showToast("Could not discard recovery session", "info");
+      }
+    },
+    [showToast]
+  );
+
+  const discardAllRecoverySessions = useCallback(async () => {
+    if (!sortedRecoverySessions.length) return;
+    try {
+      await Promise.all(sortedRecoverySessions.map((sessionId) => clearAudioChunks(sessionId)));
+      setUnfinishedSessions([]);
+      showToast("All recovery sessions cleared", "info");
+    } catch {
+      showToast("Could not clear all recovery sessions", "info");
+    }
+  }, [showToast, sortedRecoverySessions]);
 
   // Modals & details
   const [activeArticle, setActiveArticle] = useState<{ title: string; content: string } | null>(null);
@@ -876,11 +979,6 @@ const App: React.FC = () => {
   const [micConfidenceOk, setMicConfidenceOk] = useState(false);
   const [systemConfidenceOk, setSystemConfidenceOk] = useState(false);
   const [hasSystemDiagnosticsInput, setHasSystemDiagnosticsInput] = useState(false);
-
-  const showToast = useCallback((message: string, type: "success" | "info" = "success") => {
-    setToast({ message, type });
-    window.setTimeout(() => setToast(null), 3000);
-  }, []);
 
   const refreshAudioInputs = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -1476,24 +1574,23 @@ const App: React.FC = () => {
     }
   };
 
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+
   const startRecording = useCallback(async () => {
-    if (isRecording || isProcessing) return;
-    if (diagnosticsEnabled) {
-      cleanupDiagnostics();
-      setDiagnosticsEnabled(false);
-    }
-
     try {
-      const micStream = await requestMicStream();
-      const micTrack = micStream.getAudioTracks()[0];
-      if (!micTrack) {
-        throw new Error("No microphone track available. Check your selected microphone device.");
+      // 1. Get Mic Permission FIRST (Critical)
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // 2. Request Wake Lock (Non-blocking)
+      try {
+         // @ts-ignore
+         if ('wakeLock' in navigator) {
+             const lock = await navigator.wakeLock.request('screen');
+             console.log("Wake Lock acquired");
+         }
+      } catch (e) {
+         console.warn("Wake lock failed (ignoring):", e);
       }
-
-      micTrack.onmute = () => showToast("Microphone muted by browser/device. Check your mic selection.", "info");
-      micTrack.onended = () => showToast("Microphone stopped. Re-select a mic and retry recording.", "info");
-
-      micStreamRef.current = micStream;
 
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       audioContextRef.current = ctx;
@@ -1503,57 +1600,66 @@ const App: React.FC = () => {
         });
       }
 
+      // 3. Create the Destination (The single mixed stream we will record)
+      const destination = ctx.createMediaStreamDestination();
+
+      // 4. Add Microphone to Mix
+      const micSource = ctx.createMediaStreamSource(micStream);
+      micSource.connect(destination);
+
+      // 5. Add System Audio to Mix (if shared)
+      if (shareMeetingAudio && displayStream) {
+        try {
+          if (displayStream.getAudioTracks().length > 0) {
+             const systemSource = ctx.createMediaStreamSource(displayStream);
+             systemSource.connect(destination); // To Recorder
+             // systemSource.connect(analyser); // Optional: if you want to visualize system audio too
+          }
+        } catch (err) {
+          console.warn("Could not mix system audio", err);
+        }
+      }
+
+      // --- START BACKGROUND HACK (FAIL-SAFE) ---
+      try {
+        const dummyOsc = ctx.createOscillator();
+        const dummyGain = ctx.createGain();
+        dummyGain.gain.value = 0.001; 
+        dummyOsc.connect(dummyGain);
+        dummyGain.connect(ctx.destination); 
+        dummyOsc.start();
+        (ctx as any)._dummyOsc = dummyOsc;
+      } catch (err) {
+        console.warn("Background audio hack failed (ignoring)", err);
+      }
+      // --- END BACKGROUND HACK ---
+
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       analyserRef.current = analyser;
+      
+      // FIX: Connect SOURCE to Analyser, NOT the Destination node
+      micSource.connect(analyser); 
 
-      const destination = ctx.createMediaStreamDestination();
-
-      const micSource = ctx.createMediaStreamSource(micStream);
-      const micGain = ctx.createGain();
-      micGain.gain.value = shareMeetingAudio ? 2.2 : 1.4;
-      const micCompressor = ctx.createDynamicsCompressor();
-      micCompressor.threshold.value = -40;
-      micCompressor.knee.value = 24;
-      micCompressor.ratio.value = 6;
-      micCompressor.attack.value = 0.003;
-      micCompressor.release.value = 0.2;
-      micSource.connect(micGain);
-      micGain.connect(micCompressor);
-      micCompressor.connect(destination);
-      micSource.connect(analyser);
-
-      const currentDisplayStream = displayStreamRef.current;
-      const remoteAudioTracks = currentDisplayStream?.getAudioTracks() || [];
-      if (shareMeetingAudio && remoteAudioTracks.length > 0) {
-        const remoteAudioStream = new MediaStream(remoteAudioTracks);
-        const remoteSource = ctx.createMediaStreamSource(remoteAudioStream);
-        const remoteGain = ctx.createGain();
-        remoteGain.gain.value = 0.9;
-        remoteSource.connect(remoteGain);
-        remoteGain.connect(destination);
-      }
-
-      if (shareMeetingAudio && remoteAudioTracks.length === 0) {
-        showToast("No meeting audio track detected. Re-share and tick meeting/tab audio.", "info");
-      }
-
-      const outputTrack = destination.stream.getAudioTracks()[0];
-      if (!outputTrack) {
-        throw new Error("No audio track available for recording.");
-      }
-
-      const outputStream = new MediaStream([outputTrack]);
-      const mimeType = pickRecorderMimeType();
-      const mediaRecorder = mimeType
-        ? new MediaRecorder(outputStream, { mimeType })
-        : new MediaRecorder(outputStream);
+      const recordingStream = destination.stream;
+      const mediaRecorder = new MediaRecorder(recordingStream);
       mediaRecorderRef.current = mediaRecorder;
       recordingMimeTypeRef.current = mediaRecorder.mimeType || "audio/webm";
       audioChunksRef.current = [];
+      
+      // AUTO-SAVE: Generate a Session ID
+      const newSessionId = `session_${Date.now()}`;
+      setCurrentSessionId(newSessionId);
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+      mediaRecorder.ondataavailable = async (e) => {
+        if (e.data && e.data.size > 0) {
+           audioChunksRef.current.push(e.data);
+           try {
+             await appendAudioChunk(newSessionId, e.data);
+           } catch (err) {
+             console.error("Auto-save failed", err);
+           }
+        }
       };
 
       mediaRecorder.onerror = () => {
@@ -1568,13 +1674,13 @@ const App: React.FC = () => {
 
       mediaRecorder.start(500);
       void requestWakeLock();
-      showToast("Neural Capture Mode Engaged", "info");
+      showToast("Neural Capture (Auto-Save Active)", "info");
     } catch (err) {
       cleanupRecordingResources();
       const message = err instanceof Error ? err.message : "Microphone access is required for ScribeAI.";
       showToast(message, "info");
     }
-  }, [cleanupDiagnostics, cleanupRecordingResources, diagnosticsEnabled, isProcessing, isRecording, requestMicStream, requestWakeLock, shareMeetingAudio, showToast]);
+  }, [cleanupRecordingResources, displayStream, requestWakeLock, shareMeetingAudio, showToast]);
 
   const stopRecording = useCallback(async () => {
     const recorder = mediaRecorderRef.current;
@@ -1600,6 +1706,12 @@ const App: React.FC = () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: transcriptionMimeType });
         const storageKey = `audio_${Date.now()}`;
         await saveAudioBlob(storageKey, audioBlob);
+
+        // AUTO-SAVE CLEANUP: If successful, clear temp chunks
+        if (currentSessionId) {
+          await clearAudioChunks(currentSessionId);
+          setCurrentSessionId(null);
+        }
 
         const base64Audio = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -1660,7 +1772,19 @@ const App: React.FC = () => {
         showToast("AI synthesis interrupted", "info");
       } finally {
         setIsProcessing(false);
-        cleanupRecordingResources();
+        setIsRecording(false);
+
+        // CLEANUP: Release Wake Lock and Stop Oscillator
+        try {
+          await releaseWakeLock();
+          if (audioContextRef.current && (audioContextRef.current as any)._dummyOsc) {
+            try { (audioContextRef.current as any)._dummyOsc.stop(); } catch {}
+          }
+          audioContextRef.current?.close();
+        } catch {
+          // ignore
+        }
+        audioContextRef.current = null;
       }
     };
 
@@ -1670,7 +1794,7 @@ const App: React.FC = () => {
       // no-op
     }
     recorder.stop();
-  }, [accentMode, cleanupRecordingResources, inputSource, recordingTime, releaseWakeLock, showToast]);
+  }, [accentMode, cleanupRecordingResources, currentSessionId, inputSource, recordingTime, releaseWakeLock, showToast]);
 
   const handleUploadAudio = useCallback(async (file: File) => {
     if (isProcessing || isRecording) return;
@@ -1898,8 +2022,6 @@ const App: React.FC = () => {
     { key: "draftEmail", label: "Email drafts", accent: "from-orange-500/80 to-amber-500/60" },
     { key: "audioRecap", label: "Audio recaps", accent: "from-teal-500/80 to-sky-500/60" },
     { key: "support", label: "Support", accent: "from-rose-500/80 to-red-500/60" },
-    { key: "calendarUpcoming", label: "Calendar syncs", accent: "from-cyan-500/80 to-blue-500/60" },
-    { key: "autoListenSettings", label: "Auto listen saves", accent: "from-lime-500/80 to-emerald-500/60" },
   ];
 
   /** -----------------------------
@@ -1911,19 +2033,37 @@ const App: React.FC = () => {
       <div
         className={`min-h-screen ${
           theme === "dark" ? "bg-slate-950 text-white" : "bg-slate-50 text-slate-900"
-        } relative flex flex-col items-center justify-center p-6 text-center transition-colors duration-300`}
+        } relative flex flex-col items-center justify-center p-6 max-[360px]:p-3 text-center transition-colors duration-300`}
       >
-        <div className="relative z-10 max-w-5xl space-y-12">
-          <header className="space-y-10">
-            <div className="w-20 h-20 bg-indigo-600 rounded-[2rem] flex items-center justify-center text-white text-4xl font-black shadow-2xl mx-auto">
+        <div className="relative z-10 max-w-5xl space-y-12 max-[360px]:space-y-8">
+          <header className="space-y-10 max-[360px]:space-y-7">
+            <div className="w-20 h-20 max-[360px]:w-14 max-[360px]:h-14 bg-indigo-600 rounded-[2rem] max-[360px]:rounded-2xl flex items-center justify-center text-white text-4xl max-[360px]:text-2xl font-black shadow-2xl mx-auto">
               S
             </div>
-            <h1 className="text-4xl sm:text-6xl md:text-7xl font-black tracking-tighter leading-[0.95]">
+            <h1 className="text-4xl max-[360px]:text-3xl sm:text-6xl md:text-7xl font-black tracking-tighter leading-[0.95]">
               ScribeAI<span className="text-indigo-500">.</span>
             </h1>
-            <p className="text-base sm:text-lg md:text-xl font-bold text-slate-400 max-w-2xl mx-auto px-2 sm:px-4 leading-relaxed">
+            <p className="text-base max-[360px]:text-sm sm:text-lg md:text-xl font-bold text-slate-400 max-w-2xl mx-auto px-2 sm:px-4 leading-relaxed">
               Local-first recording + server-side AI processing. Responsive workspace built for mobile, tablet, and desktop.
             </p>
+            
+            {/* RECOVERY BANNER */}
+            {sortedRecoverySessions.length > 0 && latestRecoverySessionId && (
+              <div className="max-w-md mx-auto bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl flex items-center justify-between gap-4">
+                <div className="text-left">
+                  <div className="text-amber-500 font-black text-xs uppercase tracking-widest">Crash Detected</div>
+                  <div className="text-slate-300 text-xs mt-1">Found {sortedRecoverySessions.length} unfinished recording(s).</div>
+                </div>
+                <button 
+                  onClick={() => void recoverSession(latestRecoverySessionId)}
+                  disabled={Boolean(restoringSessionId)}
+                  className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wide transition disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {restoringSessionId === latestRecoverySessionId ? "Restoring..." : "Recover"}
+                </button>
+              </div>
+            )}
+            
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <button
                 onClick={() => setView("dashboard")}
@@ -2014,10 +2154,10 @@ const App: React.FC = () => {
 
       {/* DASHBOARD */}
       {view === "dashboard" && (
-        <div className="max-w-7xl mx-auto space-y-10">
+        <div className="max-w-7xl mx-auto space-y-10 max-[360px]:space-y-6">
           <header className="flex flex-col sm:flex-row justify-between items-center sm:items-end gap-6">
             <div className="space-y-2 text-center sm:text-left">
-              <h1 className="text-4xl sm:text-5xl md:text-7xl font-black tracking-tighter uppercase">Workspace.</h1>
+              <h1 className="text-4xl max-[360px]:text-3xl sm:text-5xl md:text-7xl font-black tracking-tighter uppercase">Workspace.</h1>
               <div className="flex items-center justify-center sm:justify-start gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></div>
                 <span>Local Cache Active</span>
@@ -2027,7 +2167,7 @@ const App: React.FC = () => {
             <div className="group relative w-full sm:w-auto">
               <button
                 onClick={() => setView("recorder")}
-                className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl hover:bg-indigo-700 transition-all flex items-center justify-center gap-3 w-full"
+                className="bg-indigo-600 text-white px-8 max-[360px]:px-5 py-4 max-[360px]:py-3 rounded-2xl font-black text-xs max-[360px]:text-[10px] uppercase tracking-widest shadow-xl hover:bg-indigo-700 transition-all flex items-center justify-center gap-3 w-full"
               >
                 <MicIcon className="w-4 h-4" />
                 <span>Capture Insight</span>
@@ -2069,7 +2209,7 @@ const App: React.FC = () => {
             </button>
           </nav>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-[360px]:gap-4 md:gap-8">
             {workspaceTab === "personal" &&
               (personalMeetings.length ? (
                 personalMeetings.map((m) => (
@@ -2079,7 +2219,7 @@ const App: React.FC = () => {
                       setSelectedMeetingId(m.id);
                       setView("details");
                     }}
-                    className="p-7 rounded-[2.5rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 hover:border-indigo-500/50 hover:bg-slate-50 dark:hover:bg-white/[0.06] transition-all cursor-pointer shadow-xl relative group"
+                    className="p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 hover:border-indigo-500/50 hover:bg-slate-50 dark:hover:bg-white/[0.06] transition-all cursor-pointer shadow-xl relative group"
                   >
                     <div className="flex justify-between items-start mb-5">
                       <span className="px-3 py-1.5 bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 rounded-xl text-[8px] font-black uppercase tracking-widest">
@@ -2133,7 +2273,7 @@ const App: React.FC = () => {
                       setSelectedMeetingId(m.id);
                       setView("details");
                     }}
-                    className="p-7 rounded-[2.5rem] bg-indigo-600/5 border border-indigo-500/30 hover:bg-indigo-600/10 transition-all cursor-pointer shadow-2xl relative group"
+                    className="p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-indigo-600/5 border border-indigo-500/30 hover:bg-indigo-600/10 transition-all cursor-pointer shadow-2xl relative group"
                   >
                     <div className="flex justify-between items-start mb-5">
                       <span className="px-3 py-1.5 bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 rounded-xl text-[8px] font-black uppercase tracking-widest">
@@ -2177,7 +2317,7 @@ const App: React.FC = () => {
                 <div
                   key={feed.id}
                   onClick={() => setEnterpriseDetail(feed)}
-                  className="p-7 rounded-[2.5rem] bg-white dark:bg-white/[0.02] border border-slate-200 dark:border-white/5 flex flex-col justify-between h-60 transition-all hover:bg-slate-50 dark:hover:bg-white/[0.05] cursor-pointer group shadow-lg relative"
+                  className="p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.02] border border-slate-200 dark:border-white/5 flex flex-col justify-between h-60 max-[360px]:h-52 transition-all hover:bg-slate-50 dark:hover:bg-white/[0.05] cursor-pointer group shadow-lg relative"
                 >
                   <div className="space-y-3">
                     <div className="flex justify-between items-start">
@@ -2205,26 +2345,26 @@ const App: React.FC = () => {
 
       {/* RECORDER */}
       {view === "recorder" && (
-        <div className="max-w-5xl mx-auto min-h-full flex flex-col items-center justify-start py-6 md:py-10 space-y-8">
+        <div className="max-w-5xl mx-auto min-h-full flex flex-col items-center justify-start py-6 max-[360px]:py-4 md:py-10 space-y-8 max-[360px]:space-y-5">
           <div className="flex flex-col items-center text-center space-y-4">
             <div className="inline-flex items-center gap-3 px-6 py-3 rounded-full bg-indigo-600/10 text-indigo-400 border border-indigo-500/20">
               <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
               <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.2em]">Neural Engine Ready</span>
             </div>
-            <h1 className="font-tech-display text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-black tracking-tight leading-[0.9]">
+            <h1 className="font-tech-display text-5xl max-[360px]:text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-black tracking-tight leading-[0.9]">
               {isRecording ? "Listening." : isProcessing ? "Syncing." : "Studio."}
             </h1>
             <p className="text-slate-500 dark:text-slate-400 text-sm font-bold">
               {isRecording ? `Recording • ${formatTime(recordingTime)}` : isProcessing ? "Processing…" : "Tap to start"}
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 max-[360px]:flex-col max-[360px]:items-stretch">
             <button
               onClick={() => (shareMeetingAudio ? clearDisplayStream() : void handleShareMeetingAudio())}
               className={`px-5 py-3 rounded-2xl border font-black text-[10px] uppercase tracking-widest transition ${
                 shareMeetingAudio
-                  ? "bg-white text-indigo-600 border-indigo-600"
-                  : "bg-transparent text-white border-white/50 hover:border-white"
+                  ? "machine-cta text-white border-sky-300/40"
+                  : "bg-transparent text-slate-100 border-slate-500/70 hover:border-sky-300/60"
               }`}
             >
               {shareMeetingAudio ? "Stop sharing meeting" : "Share meeting audio"}
@@ -2238,7 +2378,50 @@ const App: React.FC = () => {
               ? "Screen wake lock is active while recording."
               : "If your phone sleeps, mobile browsers may pause capture. Keep the screen awake during sessions."}
           </p>
-          <div className="w-full max-w-3xl p-6 rounded-[2.25rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/10 shadow-xl space-y-5">
+          {sortedRecoverySessions.length > 0 && latestRecoverySessionId && (
+            <div className="machine-panel w-full max-w-3xl p-4 md:p-5 rounded-2xl space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="space-y-1">
+                  <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-amber-400">Session Recovery</p>
+                  <p className="text-sm font-semibold text-slate-300">
+                    We found {sortedRecoverySessions.length} interrupted capture{sortedRecoverySessions.length > 1 ? "s" : ""}.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void recoverSession(latestRecoverySessionId)}
+                    disabled={Boolean(restoringSessionId) || isProcessing}
+                    className="machine-cta h-10 px-4 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {restoringSessionId === latestRecoverySessionId ? "Restoring..." : "Restore Latest"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void discardRecoverySession(latestRecoverySessionId)}
+                    disabled={Boolean(restoringSessionId) || isProcessing}
+                    className="h-10 px-4 rounded-xl border border-amber-500/40 text-amber-300 text-[10px] font-black uppercase tracking-[0.18em] hover:bg-amber-500/10 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    Dismiss Latest
+                  </button>
+                  {sortedRecoverySessions.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => void discardAllRecoverySessions()}
+                      disabled={Boolean(restoringSessionId) || isProcessing}
+                      className="h-10 px-4 rounded-xl border border-slate-500/40 text-slate-300 text-[10px] font-black uppercase tracking-[0.18em] hover:bg-slate-500/10 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      Clear All
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Latest saved session: {latestRecoveryTimestamp > 0 ? formatRecordedAt(new Date(latestRecoveryTimestamp).toISOString()) : "Unknown timestamp"}
+              </p>
+            </div>
+          )}
+          <div className="machine-panel w-full max-w-3xl p-6 max-[360px]:p-4 rounded-[2rem] max-[360px]:rounded-2xl space-y-5 max-[360px]:space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.32em] text-emerald-500">Recording Diagnostics</p>
@@ -2250,10 +2433,10 @@ const App: React.FC = () => {
                 type="button"
                 onClick={() => (diagnosticsEnabled ? stopDiagnostics() : void startDiagnostics())}
                 disabled={diagnosticsLoading || isRecording || isProcessing}
-                className={`h-11 px-5 rounded-xl text-[10px] font-black uppercase tracking-[0.24em] transition ${
+                className={`h-10 px-5 rounded-xl text-[10px] font-black uppercase tracking-[0.24em] transition ${
                   diagnosticsEnabled
                     ? "bg-rose-600 text-white hover:bg-rose-700"
-                    : "bg-emerald-600 text-white hover:bg-emerald-700"
+                    : "machine-cta text-white"
                 } disabled:opacity-60 disabled:cursor-not-allowed`}
               >
                 {diagnosticsLoading ? "Starting..." : diagnosticsEnabled ? "Stop Diagnostics" : "Start Diagnostics"}
@@ -2261,7 +2444,7 @@ const App: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900/60 space-y-3">
+              <div className="machine-panel p-4 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">Mic Input</span>
                   <span className="text-xs font-black text-emerald-500">{Math.round(micLevel * 100)}%</span>
@@ -2282,7 +2465,7 @@ const App: React.FC = () => {
                 </p>
               </div>
 
-              <div className="p-4 rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-slate-900/60 space-y-3">
+              <div className="machine-panel p-4 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">System Input</span>
                   <span className={`text-xs font-black ${hasSystemDiagnosticsInput ? "text-sky-500" : "text-slate-500"}`}>
@@ -2317,7 +2500,7 @@ const App: React.FC = () => {
             {diagnosticsNote && <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">{diagnosticsNote}</p>}
           </div>
 {/* RECORD + UPLOAD (SIDE BY SIDE) */}
-<div className="relative flex flex-wrap items-center justify-center gap-5">
+<div className="relative flex flex-wrap items-center justify-center gap-5 max-[360px]:gap-3">
   {/* MAIN RECORD CONTROL */}
   <div className="relative group">
     {isRecording ? (
@@ -2325,7 +2508,7 @@ const App: React.FC = () => {
         <NeuralVisualizer analyser={analyserRef.current} />
         <button
           onClick={stopRecording}
-          className="absolute inset-0 m-auto w-28 h-28 bg-red-600 rounded-[2.5rem] flex items-center justify-center text-white shadow-[0_0_80px_rgba(220,38,38,0.5)] transform hover:scale-110 transition-transform"
+          className="absolute inset-0 m-auto w-28 h-28 max-[360px]:w-20 max-[360px]:h-20 bg-red-600 rounded-[2.5rem] max-[360px]:rounded-2xl flex items-center justify-center text-white shadow-[0_0_80px_rgba(220,38,38,0.5)] transform hover:scale-110 transition-transform"
         >
           <StopIcon className="w-10 h-10" />
         </button>
@@ -2334,11 +2517,11 @@ const App: React.FC = () => {
       <button
         onClick={startRecording}
         disabled={isProcessing}
-        className={`w-56 h-56 ${
+        className={`w-56 h-56 max-[360px]:w-44 max-[360px]:h-44 ${
           isProcessing ? "bg-indigo-900 animate-pulse" : "bg-indigo-600"
-        } rounded-[2.5rem] flex items-center justify-center text-white shadow-[0_0_100px_rgba(79,70,229,0.35)] transform hover:scale-105 active:scale-95 transition-all`}
+        } rounded-[2.5rem] max-[360px]:rounded-2xl flex items-center justify-center text-white shadow-[0_0_100px_rgba(79,70,229,0.35)] transform hover:scale-105 active:scale-95 transition-all`}
       >
-        <MicIcon className="w-20 h-20 group-hover:rotate-12 transition-transform" />
+        <MicIcon className="w-20 h-20 max-[360px]:w-14 max-[360px]:h-14 group-hover:rotate-12 transition-transform" />
       </button>
     )}
 
@@ -2349,7 +2532,7 @@ const App: React.FC = () => {
 	  {!isRecording && (
 	    <div className="relative group">
 	      <label
-	        className={`cursor-pointer select-none flex items-center gap-2 px-4 h-14 rounded-2xl
+	        className={`cursor-pointer select-none flex items-center gap-2 px-4 max-[360px]:px-3 h-14 max-[360px]:h-11 rounded-2xl max-[360px]:rounded-xl
 	          bg-white/[0.04] border border-white/10 text-white/80 backdrop-blur-md
 	          ${isProcessing ? "opacity-40 pointer-events-none" : "hover:bg-white/[0.07] hover:text-white hover:scale-[1.02]"}
 	          transition`}
@@ -2375,7 +2558,7 @@ const App: React.FC = () => {
 	    </div>
 	  )}
 </div>
-          <div className="w-full max-w-5xl p-7 rounded-[3rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 backdrop-blur-3xl shadow-2xl grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+          <div className="machine-panel w-full max-w-5xl p-6 max-[360px]:p-4 rounded-[2rem] max-[360px]:rounded-2xl grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 max-[360px]:gap-3">
             <div className="space-y-2">
               <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest ml-4">Input</label>
               <select
@@ -2447,7 +2630,7 @@ const App: React.FC = () => {
 
       {/* DETAILS */}
       {view === "details" && selectedMeeting && (
-        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-8">
+        <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-8 max-[360px]:gap-4">
           <div className="flex-1 space-y-6">
             <button
               onClick={() => setView("dashboard")}
@@ -2456,8 +2639,8 @@ const App: React.FC = () => {
               ← Back to Workspace
             </button>
 
-            <div className="p-7 md:p-12 rounded-[3rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 backdrop-blur-3xl shadow-3xl space-y-8">
-              <h2 className="text-3xl md:text-5xl font-black tracking-tighter leading-tight">{selectedMeeting.title}</h2>
+            <div className="p-7 max-[360px]:p-4 md:p-12 rounded-[3rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 backdrop-blur-3xl shadow-3xl space-y-8 max-[360px]:space-y-5">
+              <h2 className="text-3xl max-[360px]:text-2xl md:text-5xl font-black tracking-tighter leading-tight">{selectedMeeting.title}</h2>
 
               <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
                 <span className="px-3 py-1.5 rounded-xl bg-indigo-600/10 text-indigo-400 border border-indigo-500/20">
@@ -2491,7 +2674,7 @@ const App: React.FC = () => {
           </div>
 
           <div className="w-full lg:w-[400px] space-y-6">
-            <div className="p-8 rounded-[2.5rem] bg-indigo-600/10 border border-indigo-500/20 space-y-6 shadow-2xl">
+            <div className="p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-indigo-600/10 border border-indigo-500/20 space-y-6 max-[360px]:space-y-4 shadow-2xl">
               <div className="flex justify-between items-center">
                 <h3 className="text-xl font-black tracking-tighter">Summary.</h3>
                 <span
@@ -2561,7 +2744,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            <div className="p-7 rounded-[2.5rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 space-y-3 shadow-lg">
+            <div className="p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 space-y-3 shadow-lg">
               <button
                 className="w-full p-4 text-left text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-white hover:bg-indigo-50 dark:hover:bg-white/5 rounded-2xl transition-all"
                 onClick={async () => {
@@ -2597,49 +2780,49 @@ const App: React.FC = () => {
 
       {/* INTEGRATIONS */}
       {view === "integrations" && (
-        <div className="max-w-5xl mx-auto space-y-10">
-          <header className="space-y-3">
-            <h1 className="text-5xl md:text-7xl font-black tracking-tighter uppercase">Integrations.</h1>
-            <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">
+        <div className="max-w-5xl mx-auto space-y-6 md:space-y-8">
+          <header className="space-y-2">
+            <h1 className="font-tech-display text-4xl max-[360px]:text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-black tracking-tight leading-[0.95] uppercase">Integrations.</h1>
+            <p className="font-tech-label text-slate-500 font-black uppercase tracking-[0.2em] text-[10px]">
               Bridge your notes to your workflow.
             </p>
           </header>
 
-          <div className="space-y-6">
+          <div className="space-y-4 md:space-y-5">
             <div className="flex flex-col gap-1">
-              <p className="text-[10px] font-black uppercase tracking-[0.35em] text-indigo-500">Calendar connectors</p>
-              <p className="text-sm text-slate-300 font-bold">
+              <p className="font-tech-label text-[9px] font-black uppercase tracking-[0.32em] text-indigo-500">Calendar connectors</p>
+              <p className="text-sm md:text-[15px] text-slate-300 font-semibold max-w-3xl">
                 Keep Auto-Listen armed by authorizing Google or Microsoft calendars. We only read upcoming meetings.
               </p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
               {calendarProviders.map((provider) => (
                 <div
                   key={provider.id}
-                  className="p-8 rounded-[2.5rem] bg-slate-950 border border-white/5 shadow-[0_30px_60px_-30px_rgba(0,0,0,0.8)] space-y-5 flex flex-col justify-between"
+                  className="p-5 md:p-6 rounded-3xl bg-slate-950/95 border border-white/10 shadow-[0_30px_60px_-35px_rgba(0,0,0,0.9)] space-y-4 flex flex-col justify-between"
                 >
-                  <div className="space-y-3">
+                  <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="text-3xl">{provider.icon}</div>
-                        <h3 className="text-lg font-black text-white">{provider.name}</h3>
+                        <div className="text-2xl">{provider.icon}</div>
+                        <h3 className="font-tech-display text-lg md:text-xl font-black text-white">{provider.name}</h3>
                       </div>
                       <span
-                        className={`text-[9px] font-black uppercase tracking-[0.35em] ${
+                        className={`font-tech-label text-[8px] font-black uppercase tracking-[0.28em] ${
                           provider.connected ? "text-emerald-400" : "text-slate-500"
                         }`}
                       >
                         {provider.connected ? "Connected" : "Disconnected"}
                       </span>
                     </div>
-                    <p className="text-slate-300 text-sm font-medium leading-relaxed">
+                    <p className="text-slate-300 text-sm font-semibold leading-relaxed">
                       {provider.description}
                     </p>
                   </div>
 
                   <button
                     onClick={() => startOAuth(provider.id as "google" | "microsoft")}
-                    className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${
+                    className={`w-full py-3 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all ${
                       provider.connected
                         ? "bg-gradient-to-r from-slate-800 to-slate-950 text-white shadow-lg"
                         : "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-xl hover:from-indigo-600 hover:to-purple-600"
@@ -2652,16 +2835,16 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
             {integrations.map((int) => (
               <div
                 key={int.id}
-                className="p-8 rounded-[2.5rem] bg-slate-950 border border-white/5 shadow-[0_40px_80px_-40px_rgba(0,0,0,0.9)] space-y-5 relative group"
+                className="p-5 md:p-6 rounded-3xl bg-slate-950/95 border border-white/10 shadow-[0_35px_70px_-40px_rgba(0,0,0,0.9)] space-y-4 relative group"
               >
                 <div className="flex justify-between items-center">
-                  <div className="text-3xl">{int.icon}</div>
+                  <div className="text-2xl">{int.icon}</div>
                   <span
-                    className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                    className={`font-tech-label px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-[0.2em] ${
                       int.connected ? "bg-emerald-500 text-white" : "bg-slate-800 text-slate-400"
                     }`}
                   >
@@ -2669,8 +2852,8 @@ const App: React.FC = () => {
                   </span>
                 </div>
 
-                <h3 className="text-xl font-black text-white">{int.name}</h3>
-                <p className="text-slate-300 font-bold text-sm leading-relaxed">
+                <h3 className="font-tech-display text-xl font-black text-white">{int.name}</h3>
+                <p className="text-slate-300 font-semibold text-sm leading-relaxed">
                   Link {int.name} to export future summaries and action items.
                 </p>
 
@@ -2679,7 +2862,7 @@ const App: React.FC = () => {
                     setIntegrations((prev) => prev.map((i) => (i.id === int.id ? { ...i, connected: !i.connected } : i)));
                     showToast(`${int.name} ${!int.connected ? "Linked" : "Unlinked"}`);
                   }}
-                  className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${
+                  className={`w-full py-3 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all ${
                     int.connected
                       ? "bg-slate-900 text-white shadow-lg border border-white/10"
                       : "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-xl hover:from-indigo-600 hover:to-purple-600"
@@ -2697,9 +2880,9 @@ const App: React.FC = () => {
 
       {/* HELP */}
       {view === "help" && (
-        <div className="max-w-7xl mx-auto space-y-10">
+        <div className="max-w-7xl mx-auto space-y-10 max-[360px]:space-y-6">
           <header className="space-y-3">
-            <h1 className="text-5xl md:text-7xl font-black tracking-tighter">Support.</h1>
+            <h1 className="font-tech-display text-5xl max-[360px]:text-3xl md:text-7xl font-black tracking-tighter">Support.</h1>
             <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Knowledge base & assistance.</p>
           </header>
 
@@ -2711,7 +2894,7 @@ const App: React.FC = () => {
             ].map((cat) => (
               <div
                 key={cat.id}
-                className="p-8 rounded-[2.5rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 space-y-6 shadow-lg"
+                className="p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 space-y-6 max-[360px]:space-y-4 shadow-lg"
               >
                 <div className="text-3xl">{cat.icon}</div>
                 <h3 className="text-lg font-black">{cat.title}</h3>
@@ -2733,14 +2916,14 @@ const App: React.FC = () => {
             ))}
           </div>
 
-          <div className="p-10 md:p-12 rounded-[3rem] bg-indigo-600 flex flex-col md:flex-row items-center justify-between gap-8 text-white shadow-2xl">
+          <div className="p-10 max-[360px]:p-5 md:p-12 rounded-[3rem] max-[360px]:rounded-2xl bg-indigo-600 flex flex-col md:flex-row items-center justify-between gap-8 max-[360px]:gap-4 text-white shadow-2xl">
             <div className="space-y-3 max-w-lg text-center md:text-left">
-              <h2 className="text-3xl md:text-4xl font-black tracking-tighter">Neural Support.</h2>
+              <h2 className="font-tech-display text-3xl max-[360px]:text-2xl md:text-4xl font-black tracking-tighter">Neural Support.</h2>
               <p className="text-base font-bold opacity-80">Ask anything about the app and workflow.</p>
             </div>
             <button
               onClick={() => setIsSupportOpen(true)}
-              className="bg-white text-indigo-600 px-8 py-4 rounded-full font-black text-base shadow-2xl hover:scale-105 active:scale-95 transition-all"
+              className="bg-white text-indigo-600 px-8 max-[360px]:px-5 py-4 max-[360px]:py-3 rounded-full font-black text-base max-[360px]:text-sm shadow-2xl hover:scale-105 active:scale-95 transition-all"
             >
               Engage AI Support
             </button>
@@ -2750,16 +2933,16 @@ const App: React.FC = () => {
 
       {/* ANALYTICS */}
       {view === "analytics" && (
-        <div className="max-w-7xl mx-auto space-y-10">
-          <div className="overflow-hidden rounded-[3rem] bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border border-white/5 shadow-[0_60px_120px_-40px_rgba(15,23,42,0.95)] p-10 space-y-10">
-            <div className="space-y-3 max-w-2xl">
-              <p className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400">NEURAL INSIGHTS</p>
-              <h1 className="text-5xl md:text-7xl font-black uppercase tracking-tight text-white">Analytics.</h1>
-              <p className="text-slate-300 text-sm md:text-base">
+        <div className="max-w-6xl mx-auto space-y-6 md:space-y-8">
+          <div className="overflow-hidden rounded-3xl md:rounded-[2.5rem] bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border border-white/10 shadow-[0_55px_110px_-50px_rgba(15,23,42,0.95)] p-5 sm:p-6 md:p-8 space-y-6 md:space-y-7">
+            <div className="space-y-2 max-w-2xl">
+              <p className="font-tech-label text-[9px] font-black uppercase tracking-[0.3em] text-indigo-400">Neural insights</p>
+              <h1 className="font-tech-display text-4xl max-[360px]:text-3xl sm:text-5xl md:text-6xl font-black uppercase tracking-tight text-white">Analytics.</h1>
+              <p className="text-slate-300 text-sm md:text-[15px]">
                 Deep metrics for every transcript, summary, and auto-listen engagement. Refresh to pull the latest backend telemetry.
               </p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-2 gap-3 md:gap-4">
               {[
                 { label: "Meetings", value: String(meetings.length), sub: "Stored locally" },
                 { label: "Local Cache", value: String(personalMeetings.length), sub: "Ready" },
@@ -2768,83 +2951,83 @@ const App: React.FC = () => {
               ].map((summary) => (
                 <div
                   key={summary.label}
-                  className="flex flex-col rounded-[2rem] bg-white/5 border border-white/5 p-6 backdrop-blur-3xl shadow-lg space-y-2"
+                  className="flex flex-col rounded-2xl bg-white/5 border border-white/10 p-4 md:p-5 backdrop-blur-3xl shadow-lg space-y-1.5"
                 >
-                  <p className="text-[10px] font-black uppercase tracking-[0.35em] text-slate-400">{summary.label}</p>
-                  <p className="text-4xl font-black text-white">{summary.value}</p>
-                  <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">{summary.sub}</p>
+                  <p className="font-tech-label text-[8px] md:text-[9px] font-black uppercase tracking-[0.25em] text-slate-400">{summary.label}</p>
+                  <p className="font-tech-display text-2xl md:text-3xl font-black text-white leading-none">{summary.value}</p>
+                  <p className="font-tech-label text-[9px] md:text-[10px] uppercase tracking-[0.18em] text-slate-400">{summary.sub}</p>
                 </div>
               ))}
             </div>
           </div>
-          <div className="space-y-6">
-            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-4 md:space-y-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-500">Backend telemetry</p>
-                <h2 className="text-3xl font-black text-white">Gemini & Auto-Listen</h2>
+                <p className="font-tech-label text-[9px] font-black uppercase tracking-[0.3em] text-indigo-500">Backend telemetry</p>
+                <h2 className="font-tech-display text-2xl md:text-3xl font-black text-white">Gemini & Auto-Listen</h2>
               </div>
               <button
                 onClick={() => fetchAnalytics()}
-                className="px-5 py-2 rounded-full border border-indigo-500 text-indigo-500 text-[10px] font-black uppercase tracking-[0.35em] transition hover:bg-indigo-500 hover:text-white"
+                className="w-full sm:w-auto px-4 py-2 rounded-full border border-indigo-500 text-indigo-500 font-tech-label text-[9px] font-black uppercase tracking-[0.22em] transition hover:bg-indigo-500 hover:text-white"
               >
                 Refresh
               </button>
             </div>
             {analyticsLoading ? (
-              <div className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-xl">
-                <p className="text-sm font-black text-slate-400">Loading backend metrics…</p>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4 md:p-5 shadow-xl">
+                <p className="text-sm font-semibold text-slate-400">Loading backend metrics…</p>
               </div>
             ) : analyticsError ? (
-              <div className="rounded-[2rem] border border-red-400/40 bg-red-500/10 p-6 shadow-xl">
-                <p className="text-sm font-black text-red-400">Error: {analyticsError}</p>
+              <div className="rounded-2xl border border-red-400/40 bg-red-500/10 p-4 md:p-5 shadow-xl">
+                <p className="text-sm font-semibold text-red-400">Error: {analyticsError}</p>
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
                   {analyticsMetricList.map((metric) => {
                     const stats = analyticsMetrics?.endpoints?.[metric.key];
                     return (
                       <div
                         key={metric.key}
-                        className="rounded-[2rem] border border-white/10 bg-white/5 p-6 shadow-xl space-y-2 backdrop-blur-3xl"
+                        className="rounded-2xl border border-white/10 bg-white/5 p-4 md:p-5 shadow-xl space-y-1.5 backdrop-blur-3xl"
                       >
-                        <p className="text-[10px] font-black uppercase tracking-[0.35em] text-slate-400">{metric.label}</p>
-                        <p className="text-3xl font-black text-white">{stats?.count ?? 0}</p>
-                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">
+                        <p className="font-tech-label text-[8px] md:text-[9px] font-black uppercase tracking-[0.25em] text-slate-400">{metric.label}</p>
+                        <p className="font-tech-display text-2xl md:text-3xl font-black text-white leading-none">{stats?.count ?? 0}</p>
+                        <p className="font-tech-label text-[9px] md:text-[10px] uppercase tracking-[0.18em] text-slate-400">
                           Avg {stats?.averageDurationMs ?? "—"} ms • {stats?.errors ?? 0} errors
                         </p>
-                        <div className="h-2 rounded-full bg-white/10">
+                        <div className="h-1.5 rounded-full bg-white/10">
                           <div
                             className={`h-full rounded-full bg-gradient-to-r ${metric.accent}`}
                             style={{ width: `${Math.min(stats?.errorRate ?? 0, 100)}%` }}
                           />
                         </div>
                         {stats?.lastError && (
-                          <p className="text-[9px] uppercase tracking-[0.35em] text-rose-400">Last error logged</p>
+                          <p className="font-tech-label text-[8px] uppercase tracking-[0.22em] text-rose-400">Last error logged</p>
                         )}
                       </div>
                     );
                   })}
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  <div className="rounded-[2rem] border border-white/10 bg-gradient-to-br from-indigo-600/40 to-purple-600/30 p-6 shadow-2xl space-y-2">
-                    <p className="text-[10px] font-black uppercase tracking-[0.35em] text-indigo-100">Calendar syncs</p>
-                    <p className="text-4xl font-black text-white">{analyticsMetrics?.autoListen.calendarSyncs ?? 0}</p>
-                    <p className="text-[10px] uppercase tracking-[0.35em] text-white/70">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
+                  <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-indigo-600/40 to-purple-600/30 p-4 md:p-5 shadow-2xl space-y-1.5">
+                    <p className="font-tech-label text-[8px] font-black uppercase tracking-[0.24em] text-indigo-100">Calendar syncs</p>
+                    <p className="font-tech-display text-3xl md:text-4xl font-black text-white leading-none">{analyticsMetrics?.autoListen.calendarSyncs ?? 0}</p>
+                    <p className="font-tech-label text-[9px] uppercase tracking-[0.18em] text-white/70">
                       Errors: {analyticsMetrics?.autoListen.calendarErrors ?? 0}
                     </p>
                   </div>
-                  <div className="rounded-[2rem] border border-white/10 bg-gradient-to-br from-emerald-500/40 to-lime-500/30 p-6 shadow-2xl space-y-2">
-                    <p className="text-[10px] font-black uppercase tracking-[0.35em] text-emerald-100">Auto-listen tweaks</p>
-                    <p className="text-4xl font-black text-white">{analyticsMetrics?.autoListen.toggles ?? 0}</p>
-                    <p className="text-[10px] uppercase tracking-[0.35em] text-white/80">
+                  <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-emerald-500/40 to-lime-500/30 p-4 md:p-5 shadow-2xl space-y-1.5">
+                    <p className="font-tech-label text-[8px] font-black uppercase tracking-[0.24em] text-emerald-100">Auto-listen tweaks</p>
+                    <p className="font-tech-display text-3xl md:text-4xl font-black text-white leading-none">{analyticsMetrics?.autoListen.toggles ?? 0}</p>
+                    <p className="font-tech-label text-[9px] uppercase tracking-[0.18em] text-white/80">
                       Last saved: {analyticsMetrics?.autoListen.lastUpdated ? new Date(analyticsMetrics.autoListen.lastUpdated).toLocaleString() : "—"}
                     </p>
                   </div>
-                  <div className="rounded-[2rem] border border-white/10 bg-gradient-to-br from-slate-800/80 to-slate-900 p-6 shadow-2xl space-y-2">
-                    <p className="text-[10px] font-black uppercase tracking-[0.35em] text-slate-200">Heartbeat</p>
-                    <p className="text-4xl font-black text-white">{analyticsMetrics?.timestamp ? "Live" : "Idle"}</p>
-                    <p className="text-[10px] uppercase tracking-[0.35em] text-white/70">
+                  <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-slate-800/80 to-slate-900 p-4 md:p-5 shadow-2xl space-y-1.5">
+                    <p className="font-tech-label text-[8px] font-black uppercase tracking-[0.24em] text-slate-200">Heartbeat</p>
+                    <p className="font-tech-display text-3xl md:text-4xl font-black text-white leading-none">{analyticsMetrics?.timestamp ? "Live" : "Idle"}</p>
+                    <p className="font-tech-label text-[9px] uppercase tracking-[0.18em] text-white/70">
                       {analyticsMetrics?.timestamp ? new Date(analyticsMetrics.timestamp).toLocaleTimeString() : "No data yet"}
                     </p>
                   </div>
@@ -2857,13 +3040,13 @@ const App: React.FC = () => {
 
       {/* SETTINGS */}
       {view === "settings" && (
-        <div className="max-w-4xl mx-auto space-y-10">
+        <div className="max-w-4xl mx-auto space-y-10 max-[360px]:space-y-6">
           <header className="space-y-3">
-            <h1 className="text-5xl md:text-7xl font-black tracking-tighter uppercase">Config.</h1>
+            <h1 className="font-tech-display text-5xl max-[360px]:text-3xl md:text-7xl font-black tracking-tighter uppercase">Config.</h1>
             <p className="text-slate-500 font-bold uppercase tracking-widest text-xs">Preferences & local reset.</p>
           </header>
 
-          <div className="p-8 rounded-[2.5rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 space-y-8 shadow-xl">
+          <div className="p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 space-y-8 max-[360px]:space-y-5 shadow-xl">
             <div className="space-y-4">
               <h3 className="text-[10px] font-black uppercase text-indigo-500 tracking-widest border-b border-slate-200 dark:border-white/5 pb-3">
                 Recording Defaults
@@ -2994,7 +3177,7 @@ const App: React.FC = () => {
       {/* MODALS */}
       {activeArticle && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md">
-          <div className="max-w-xl w-full p-8 rounded-[2.5rem] bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-3xl space-y-5 relative">
+          <div className="max-w-xl w-full p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-3xl space-y-5 relative">
             <button onClick={() => setActiveArticle(null)} className="absolute top-6 right-7 text-slate-500 hover:text-indigo-500 font-black">
               ✕
             </button>
@@ -3012,7 +3195,7 @@ const App: React.FC = () => {
 
       {enterpriseDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md">
-          <div className="max-w-xl w-full p-8 rounded-[2.5rem] bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-3xl space-y-5 relative">
+          <div className="max-w-xl w-full p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-3xl space-y-5 relative">
             <button
               onClick={() => setEnterpriseDetail(null)}
               className="absolute top-6 right-7 text-slate-500 hover:text-indigo-500 font-black"
@@ -3036,7 +3219,7 @@ const App: React.FC = () => {
 
       {isSupportOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/90 backdrop-blur-2xl">
-          <div className="max-w-3xl w-full h-[75vh] flex flex-col p-7 rounded-[2.5rem] bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-3xl relative">
+          <div className="max-w-3xl w-full h-[75vh] max-[360px]:h-[80vh] flex flex-col p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-3xl relative">
             <button
               onClick={() => setIsSupportOpen(false)}
               className="absolute top-6 right-7 text-slate-500 hover:text-indigo-500 font-black"

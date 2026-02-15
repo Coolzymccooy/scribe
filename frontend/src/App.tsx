@@ -32,7 +32,6 @@ import {
   askSupport,
 } from "./services/apiService";
 
-import { useWakeLock } from "./hooks/useWakeLock";
 
 import {
   saveAudioBlob,
@@ -782,8 +781,6 @@ const App: React.FC = () => {
     }
   };
 
-  const { requestWakeLock, releaseWakeLock } = useWakeLock();
-  const { requestWakeLock, releaseWakeLock } = useWakeLock();
   // Modals & details
   const [activeArticle, setActiveArticle] = useState<{ title: string; content: string } | null>(null);
   const [enterpriseDetail, setEnterpriseDetail] = useState<{

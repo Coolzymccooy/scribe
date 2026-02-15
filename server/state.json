@@ -14,7 +14,7 @@
   "analyticsStore": {
     "endpoints": {
       "calendarUpcoming": {
-        "count": 87,
+        "count": 85,
         "totalDurationMs": 7,
         "errors": 0,
         "lastError": null
@@ -58,9 +58,9 @@
     },
     "autoListen": {
       "toggles": 60,
-      "calendarSyncs": 87,
+      "calendarSyncs": 85,
       "calendarErrors": 0,
-      "lastUpdated": "2026-02-15T18:48:51.888Z"
+      "lastUpdated": "2026-02-15T18:47:51.398Z"
     }
   }
 }

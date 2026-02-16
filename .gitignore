@@ -69,6 +69,12 @@ $RECYCLE.BIN/
 *.tsbuildinfo
 
 # ===========================
+# RUNTIME STATE (DO NOT TRACK)
+# ===========================
+server/state.json
+/state.json
+
+# ===========================
 # PYTHON (IF YOU USE SCRIPTS)
 # ===========================
 __pycache__/

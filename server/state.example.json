@@ -14,53 +14,53 @@
   "analyticsStore": {
     "endpoints": {
       "calendarUpcoming": {
-        "count": 388,
-        "totalDurationMs": 53,
+        "count": 0,
+        "totalDurationMs": 0,
         "errors": 0,
         "lastError": null
       },
       "autoListenSettings": {
-        "count": 96,
-        "totalDurationMs": 16,
+        "count": 0,
+        "totalDurationMs": 0,
         "errors": 0,
         "lastError": null
       },
       "support": {
-        "count": 2,
-        "totalDurationMs": 7098,
+        "count": 0,
+        "totalDurationMs": 0,
         "errors": 0,
         "lastError": null
       },
       "transcribe": {
-        "count": 11,
-        "totalDurationMs": 193370,
+        "count": 0,
+        "totalDurationMs": 0,
         "errors": 0,
         "lastError": null
       },
       "analyze": {
-        "count": 11,
-        "totalDurationMs": 54117,
+        "count": 0,
+        "totalDurationMs": 0,
         "errors": 0,
         "lastError": null
       },
       "audioRecap": {
-        "count": 3,
-        "totalDurationMs": 33722,
+        "count": 0,
+        "totalDurationMs": 0,
         "errors": 0,
         "lastError": null
       },
       "draftEmail": {
-        "count": 1,
-        "totalDurationMs": 5002,
+        "count": 0,
+        "totalDurationMs": 0,
         "errors": 0,
         "lastError": null
       }
     },
     "autoListen": {
-      "toggles": 96,
-      "calendarSyncs": 388,
+      "toggles": 0,
+      "calendarSyncs": 0,
       "calendarErrors": 0,
-      "lastUpdated": "2026-02-16T12:06:16.013Z"
+      "lastUpdated": null
     }
   }
 }

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import scribeAiLogo from "../assets/scribeai-logo.png";
 
 type AuthMode = "signin" | "signup" | "reset";
 
@@ -6,11 +7,13 @@ type AuthScreenProps = {
   isBusy: boolean;
   error: string | null;
   notice: string | null;
+  verificationHint?: string | null;
   firebaseConfigured: boolean;
   onGoogleSignIn: () => void;
   onEmailSignIn: (email: string, password: string) => Promise<void>;
   onEmailSignUp: (email: string, password: string) => Promise<void>;
   onResetPassword: (email: string) => Promise<void>;
+  onResendVerification: (email: string, password: string) => Promise<void>;
 };
 
 const GoogleIcon: React.FC = () => (
@@ -29,11 +32,13 @@ const AuthScreen: React.FC<AuthScreenProps> = ({
   isBusy,
   error,
   notice,
+  verificationHint,
   firebaseConfigured,
   onGoogleSignIn,
   onEmailSignIn,
   onEmailSignUp,
   onResetPassword,
+  onResendVerification,
 }) => {
   const [mode, setMode] = useState<AuthMode>("signin");
   const [email, setEmail] = useState("");
@@ -107,25 +112,28 @@ const AuthScreen: React.FC<AuthScreenProps> = ({
           <div className="grid lg:grid-cols-[1.15fr,1fr]">
             <section className="relative p-7 max-[360px]:p-4 md:p-12 bg-slate-950 text-white">
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_10%_12%,rgba(45,212,191,0.22),transparent_40%),radial-gradient(circle_at_86%_85%,rgba(14,165,233,0.2),transparent_45%)]" />
-              <div className="relative z-10 space-y-10 max-[360px]:space-y-6">
+              <div className="relative z-10 space-y-8 max-[360px]:space-y-5">
                 <button
                   type="button"
                   onClick={() => {
                     setMode("signin");
                     setLocalError(null);
                   }}
-                  className="group inline-flex items-center gap-3"
+                  className="group inline-flex items-center gap-3.5 max-[360px]:gap-2.5"
                   title="Return to sign in"
                   aria-label="Return to sign in"
                 >
-                  <div className="w-14 h-14 max-[360px]:w-11 max-[360px]:h-11 rounded-2xl bg-gradient-to-br from-teal-300 to-sky-400 text-slate-950 flex items-center justify-center text-2xl max-[360px]:text-xl font-black transition-transform group-hover:scale-105">
-                    S
-                  </div>
-                  <span className="font-tech-label text-[10px] uppercase tracking-[0.22em] text-cyan-100/90">Landing</span>
+                  <img
+                    src={scribeAiLogo}
+                    alt="ScribeAI"
+                    className="h-12 max-[360px]:h-9 md:h-[3.6rem] w-auto object-contain transition-transform group-hover:scale-[1.02]"
+                  />
+                  <span className="font-tech-display text-base max-[360px]:text-sm md:text-lg font-black tracking-[0.02em] text-cyan-50">
+                    ScribeAI
+                  </span>
                 </button>
-                <div className="space-y-5 font-tech-display">
-                  <p className="text-[11px] uppercase tracking-[0.36em] font-semibold text-cyan-200">ScribeAI Access</p>
-                  <h1 className="text-4xl max-[360px]:text-3xl md:text-5xl font-extrabold leading-[1.03] tracking-tight">
+                <div className="space-y-4 font-tech-display max-w-[34rem]">
+                  <h1 className="text-3xl max-[360px]:text-[2rem] md:text-[2.8rem] font-extrabold leading-[1.06] tracking-tight">
                     Capture the full meeting, not just one side.
                   </h1>
                   <p className="text-cyan-50/80 text-base max-[360px]:text-sm max-w-md leading-relaxed font-medium">
@@ -222,6 +230,51 @@ const AuthScreen: React.FC<AuthScreenProps> = ({
                     >
                       Forgot password?
                     </button>
+                  )}
+
+                  {mode === "signin" && verificationHint && (
+                    <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 space-y-2">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-amber-700">Email verification required</p>
+                      <p className="text-xs font-semibold text-amber-800">{verificationHint}</p>
+                      <button
+                        type="button"
+                        disabled={disabled || !email.trim() || !password.trim()}
+                        onClick={async () => {
+                          setLocalError(null);
+                          try {
+                            await onEmailSignIn(email.trim(), password);
+                          } catch (err) {
+                            setLocalError(err instanceof Error ? err.message : "Could not continue.");
+                          }
+                        }}
+                        className={`h-10 px-4 rounded-xl text-[11px] font-black uppercase tracking-[0.14em] ${
+                          disabled || !email.trim() || !password.trim()
+                            ? "bg-amber-200 text-amber-600 cursor-not-allowed"
+                            : "bg-amber-500 text-white hover:bg-amber-600"
+                        }`}
+                      >
+                        I've verified - continue
+                      </button>
+                      <button
+                        type="button"
+                        disabled={disabled || !email.trim() || !password.trim()}
+                        onClick={async () => {
+                          setLocalError(null);
+                          try {
+                            await onResendVerification(email.trim(), password);
+                          } catch (err) {
+                            setLocalError(err instanceof Error ? err.message : "Could not resend verification.");
+                          }
+                        }}
+                        className={`h-10 px-4 rounded-xl text-[11px] font-black uppercase tracking-[0.14em] border ${
+                          disabled || !email.trim() || !password.trim()
+                            ? "border-amber-300 text-amber-400 bg-amber-100/50 cursor-not-allowed"
+                            : "border-amber-500 text-amber-700 bg-white hover:bg-amber-100"
+                        }`}
+                      >
+                        Re-send verification
+                      </button>
+                    </div>
                   )}
 
                   <button

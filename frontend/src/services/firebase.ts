@@ -5,6 +5,7 @@ import {
   getAuth,
   getRedirectResult,
   onAuthStateChanged,
+  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -80,13 +81,25 @@ export const signOutUser = async () => {
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
+const buildVerificationActionUrl = () => {
+  if (typeof window === "undefined") return "https://localhost";
+  const base = window.location.origin.replace(/\/$/, "");
+  return `${base}/?verified=email`;
+};
+
 export const signInWithEmailPassword = async (email: string, password: string) => {
   const auth = ensureAuth();
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail || !password) {
     throw new Error("Email and password are required.");
   }
-  await signInWithEmailAndPassword(auth, normalizedEmail, password);
+  const credentials = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+  await credentials.user.reload();
+  if (!credentials.user.emailVerified) {
+    await signOut(auth);
+    throw new Error("Verify your email first, then click 'I've verified - continue'.");
+  }
+  return credentials.user;
 };
 
 export const signUpWithEmailPassword = async (email: string, password: string) => {
@@ -95,7 +108,46 @@ export const signUpWithEmailPassword = async (email: string, password: string) =
   if (!normalizedEmail || !password) {
     throw new Error("Email and password are required.");
   }
-  await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+  const credentials = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+  await sendEmailVerification(credentials.user, {
+    url: buildVerificationActionUrl(),
+    handleCodeInApp: false,
+  });
+  await signOut(auth);
+  return credentials.user;
+};
+
+export const resendVerificationEmail = async (email: string, password: string) => {
+  const auth = ensureAuth();
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !password) {
+    throw new Error("Email and password are required to resend verification.");
+  }
+
+  const credentials = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+  try {
+    await credentials.user.reload();
+    if (credentials.user.emailVerified) {
+      return {
+        alreadyVerified: true,
+        email: credentials.user.email || normalizedEmail,
+      };
+    }
+
+    await sendEmailVerification(credentials.user, {
+      url: buildVerificationActionUrl(),
+      handleCodeInApp: false,
+    });
+
+    return {
+      alreadyVerified: false,
+      email: credentials.user.email || normalizedEmail,
+    };
+  } finally {
+    await signOut(auth).catch(() => {
+      // no-op
+    });
+  }
 };
 
 export const sendResetPasswordEmail = async (email: string) => {

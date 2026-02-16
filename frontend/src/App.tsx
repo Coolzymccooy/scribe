@@ -41,6 +41,7 @@ import {
   listUnfinishedSessions,
   getAudioChunks
 } from "./services/storageService";
+import scribeAiLogo from "./assets/scribeai-logo.png";
 
 /** -----------------------------
  * Small UI helpers
@@ -53,7 +54,7 @@ const Tooltip: React.FC<{ text: string; position?: "top" | "bottom" }> = ({
   <span
     className={`pointer-events-none absolute z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-200
       ${position === "top" ? "-top-8" : "top-10"} left-1/2 -translate-x-1/2
-      bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-xl shadow-xl`}
+      whitespace-nowrap bg-slate-900/95 text-slate-100 text-xs font-medium tracking-normal px-2.5 py-1 rounded-md shadow-lg`}
   >
     {text}
   </span>
@@ -327,6 +328,22 @@ const MIC_DIAGNOSTIC_GAIN = 2.4;
 const MIC_RECORDING_GAIN = 2.8;
 const SYSTEM_RECORDING_GAIN = 0.78;
 const MIX_BUS_GAIN = 0.92;
+const AI_BRIEF_CLICK_COOLDOWN_MS = 30_000;
+
+const PROCESSING_PHASES = [
+  { key: "finalize", label: "Finalizing audio", detail: "Sealing capture chunks and preparing payload." },
+  { key: "transcribe", label: "Transcribing speech", detail: "Converting conversation audio into speaker text." },
+  { key: "summarize", label: "Generating summary", detail: "Extracting decisions, actions, and key points." },
+  { key: "publish", label: "Publishing result", detail: "Saving your meeting note and opening details." },
+] as const;
+
+type LandingArtDirection = "minimal" | "cinematic" | "enterprise";
+
+const LANDING_ART_DIRECTIONS: Array<{ id: LandingArtDirection; label: string }> = [
+  { id: "minimal", label: "Minimal Cyber" },
+  { id: "cinematic", label: "Bold Cinematic" },
+  { id: "enterprise", label: "Enterprise Premium" },
+];
 
 const getAnalyserLevel = (analyser: AnalyserNode | null) => {
   if (!analyser) return 0;
@@ -397,7 +414,7 @@ const SidebarItem: React.FC<{
   </button>
 );
 
-const Layout: React.FC<{
+type LayoutProps = {
   children: React.ReactNode;
   view: ViewState;
   setView: (v: ViewState) => void;
@@ -406,7 +423,24 @@ const Layout: React.FC<{
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   toast: { message: string; type: "success" | "info" } | null;
-}> = ({ children, view, setView, theme, setTheme, searchQuery, setSearchQuery, toast }) => {
+  accountLabel?: string;
+  onSignOut?: () => void;
+  isAuthBusy?: boolean;
+};
+
+const Layout: React.FC<LayoutProps> = ({
+  children,
+  view,
+  setView,
+  theme,
+  setTheme,
+  searchQuery,
+  setSearchQuery,
+  toast,
+  accountLabel,
+  onSignOut,
+  isAuthBusy = false,
+}) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -427,16 +461,17 @@ const Layout: React.FC<{
             setView("landing");
             setIsMobileMenuOpen(false);
           }}
-          className="group flex items-center gap-3 cursor-pointer mb-2 text-left"
+          className="group flex items-center gap-3.5 cursor-pointer mb-2 text-left"
           title="Go to landing page"
           aria-label="Go to landing page"
         >
-          <div className="w-9 h-9 machine-cta rounded-xl flex items-center justify-center text-white font-black text-base transition-transform group-hover:scale-105">
-            S
-          </div>
           <div className="min-w-0">
-            <span className="font-tech-display font-black text-xl tracking-tight text-slate-100 block leading-none">ScribeAI</span>
-            <span className="font-tech-label text-[8px] uppercase tracking-[0.2em] text-cyan-200/80">Landing</span>
+            <img
+              src={scribeAiLogo}
+              alt="ScribeAI"
+              className="h-9 sm:h-10 w-auto object-contain transition-transform group-hover:scale-[1.02]"
+            />
+            <span className="font-tech-label text-[10px] sm:text-[11px] tracking-[0.08em] text-cyan-200/95">ScribeAI</span>
           </div>
         </button>
 
@@ -523,8 +558,7 @@ const Layout: React.FC<{
               title="Go to landing page"
               aria-label="Go to landing page"
             >
-              <span className="w-6 h-6 machine-cta rounded-md flex items-center justify-center text-white font-black text-xs">S</span>
-              <span className="hidden sm:block font-tech-display font-black text-sm tracking-tight text-slate-100">ScribeAI</span>
+              <span className="font-tech-label text-[10px] uppercase tracking-[0.12em] text-cyan-100">Home</span>
             </button>
           </div>
 
@@ -540,7 +574,7 @@ const Layout: React.FC<{
             />
           </div>
 
-          <div className="flex items-center gap-3 md:gap-6">
+          <div className="flex items-center gap-2 sm:gap-3 md:gap-4 shrink-0">
             <div className="group relative">
               <button
                 onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -565,6 +599,22 @@ const Layout: React.FC<{
               </button>
               <Tooltip text="Begin recording" position="bottom" />
             </div>
+
+            {accountLabel && onSignOut && (
+              <div className="flex items-center gap-2 px-2 sm:px-2.5 py-1.5 rounded-xl border border-white/10 bg-slate-900/80 text-white backdrop-blur-xl shadow-xl min-w-0 max-w-[12.5rem] sm:max-w-[15rem] md:max-w-[18rem]">
+                <div className="hidden md:block min-w-0 truncate text-[10px] font-black uppercase tracking-[0.14em] text-cyan-100">
+                  {accountLabel}
+                </div>
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  disabled={isAuthBusy}
+                  className="px-2.5 py-1.5 rounded-lg bg-white text-slate-900 text-[10px] font-black uppercase tracking-[0.12em] disabled:opacity-60 whitespace-nowrap"
+                >
+                  Sign out
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
@@ -744,17 +794,32 @@ const MOCK_ENTERPRISE_FEED = [
   },
 ];
 
-const App: React.FC = () => {
+type AppProps = {
+  accountLabel?: string;
+  onSignOut?: () => void;
+  isAuthBusy?: boolean;
+};
+
+const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }) => {
   const [view, setView] = useState<ViewState>("landing");
 
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem("scribeai_theme");
     return saved === "light" ? "light" : "dark";
   });
+  const [landingArtDirection, setLandingArtDirection] = useState<LandingArtDirection>(() => {
+    const saved = localStorage.getItem("scribe_landing_art_direction");
+    if (saved === "minimal" || saved === "cinematic" || saved === "enterprise") return saved;
+    return "enterprise";
+  });
 
   useEffect(() => {
     localStorage.setItem("scribeai_theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem("scribe_landing_art_direction", landingArtDirection);
+  }, [landingArtDirection]);
 
   const [meetings, setMeetings] = useState<MeetingNote[]>(() => {
     const saved = localStorage.getItem("scribe_v3_meetings");
@@ -776,6 +841,7 @@ const App: React.FC = () => {
 
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingPhaseKey, setProcessingPhaseKey] = useState<(typeof PROCESSING_PHASES)[number]["key"] | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -897,8 +963,11 @@ const App: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [recapAudioUrl, setRecapAudioUrl] = useState<string | null>(null);
   const [recapLoading, setRecapLoading] = useState(false);
+  const [recapCooldownRemaining, setRecapCooldownRemaining] = useState(0);
   const [isRecapPlaying, setIsRecapPlaying] = useState(false);
   const [recapDuration, setRecapDuration] = useState(0);
+  const recapCooldownUntilRef = useRef(0);
+  const recapCooldownTimerRef = useRef<number | null>(null);
 
   const revokeRecapUrl = () => {
     if (recapAudioUrl) {
@@ -917,6 +986,10 @@ const App: React.FC = () => {
     setRecapDuration(0);
     setIsRecapPlaying(false);
   };
+
+  const setProcessingPhase = useCallback((phaseKey: (typeof PROCESSING_PHASES)[number]["key"] | null) => {
+    setProcessingPhaseKey(phaseKey);
+  }, []);
 
   const [integrations, setIntegrations] = useState<{ id: string; name: string; icon: string; connected: boolean }[]>([
     { id: "notion", name: "Notion", icon: "📓", connected: false },
@@ -1739,10 +1812,12 @@ const App: React.FC = () => {
 
     setIsRecording(false);
     setIsProcessing(true);
+    setProcessingPhase("finalize");
     void releaseWakeLock();
 
     recorder.onstop = async () => {
       try {
+        setProcessingPhase("finalize");
         const startedAt = recordingStartedAtRef.current;
         const computedDuration = startedAt ? Math.max(1, Math.round((Date.now() - startedAt) / 1000)) : recordingTime;
         setRecordingTime(computedDuration);
@@ -1775,7 +1850,8 @@ const App: React.FC = () => {
           reader.readAsDataURL(audioBlob);
         });
 
-        showToast("AI Processing Transcript...", "info");
+        setProcessingPhase("transcribe");
+        showToast("Transcribing recording...", "info");
 
         // 1) Transcribe
         const rawTranscript = await transcribeAudio(base64Audio, transcriptionMimeType, accentMode);
@@ -1790,10 +1866,12 @@ const App: React.FC = () => {
             ? rawTranscript
             : transcriptSegments.map((s) => s.text).join("\n");
 
+        setProcessingPhase("summarize");
         const rawSummary = await analyzeMeeting(transcriptForBackend, "meeting", accentMode);
         const summary = normalizeSummary(rawSummary);
 
         // 3) Create meeting note matching your types.ts strictly
+        setProcessingPhase("publish");
         const id = `m_${Date.now()}`;
         const createdAtIso = new Date().toISOString();
         const title = safeTitleFromTranscript(transcriptSegments, "New Recording");
@@ -1823,6 +1901,7 @@ const App: React.FC = () => {
         showToast("AI synthesis interrupted", "info");
       } finally {
         setIsProcessing(false);
+        setProcessingPhase(null);
         setIsRecording(false);
 
         // CLEANUP: Release Wake Lock and Stop Oscillator
@@ -1845,13 +1924,14 @@ const App: React.FC = () => {
       // no-op
     }
     recorder.stop();
-  }, [accentMode, cleanupRecordingResources, currentSessionId, inputSource, recordingTime, releaseWakeLock, showToast]);
+  }, [accentMode, cleanupRecordingResources, currentSessionId, inputSource, recordingTime, releaseWakeLock, setProcessingPhase, showToast]);
 
   const handleUploadAudio = useCallback(async (file: File) => {
     if (isProcessing || isRecording) return;
 
     try {
       setIsProcessing(true);
+      setProcessingPhase("finalize");
 
       if (file.type.startsWith("video")) {
         const duration = await getMediaDuration(file);
@@ -1878,7 +1958,8 @@ const App: React.FC = () => {
 
       const base64Audio = await fileToBase64Payload(file);
 
-      showToast('AI Processing Transcript...', 'info');
+      setProcessingPhase("transcribe");
+      showToast("Transcribing upload...", "info");
 
       // 1) Transcribe
       const rawTranscript = await transcribeAudio(base64Audio, mimeType, accentMode);
@@ -1890,10 +1971,12 @@ const App: React.FC = () => {
           ? rawTranscript
           : transcriptSegments.map((s) => s.text).join('\n');
 
+      setProcessingPhase("summarize");
       const rawSummary = await analyzeMeeting(transcriptForBackend, 'meeting', accentMode);
       const summary = normalizeSummary(rawSummary);
 
       // 3) Create meeting note
+      setProcessingPhase("publish");
       const id = `m_${Date.now()}`;
       const createdAtIso = new Date().toISOString();
       const titleFromName = (file.name || 'Uploaded Audio').replace(/\.[^/.]+$/, '');
@@ -1926,8 +2009,9 @@ const App: React.FC = () => {
 	      showToast(`Upload failed: ${msg}`, 'info');
     } finally {
       setIsProcessing(false);
+      setProcessingPhase(null);
     }
-  }, [accentMode, isProcessing, isRecording]);
+  }, [accentMode, isProcessing, isRecording, setProcessingPhase, showToast]);
 
   const handleShareMeetingAudio = useCallback(async () => {
     try {
@@ -1959,11 +2043,51 @@ const App: React.FC = () => {
     }
   }, [setDisplayStreamState, showToast]);
 
+  const clearRecapCooldownTimer = useCallback(() => {
+    if (recapCooldownTimerRef.current !== null) {
+      window.clearInterval(recapCooldownTimerRef.current);
+      recapCooldownTimerRef.current = null;
+    }
+  }, []);
+
+  const startRecapCooldown = useCallback(() => {
+    recapCooldownUntilRef.current = Date.now() + AI_BRIEF_CLICK_COOLDOWN_MS;
+    setRecapCooldownRemaining(Math.ceil(AI_BRIEF_CLICK_COOLDOWN_MS / 1000));
+    clearRecapCooldownTimer();
+    recapCooldownTimerRef.current = window.setInterval(() => {
+      const remainingMs = recapCooldownUntilRef.current - Date.now();
+      if (remainingMs <= 0) {
+        setRecapCooldownRemaining(0);
+        clearRecapCooldownTimer();
+        return;
+      }
+      setRecapCooldownRemaining(Math.ceil(remainingMs / 1000));
+    }, 400);
+  }, [clearRecapCooldownTimer]);
+
+  useEffect(() => {
+    return () => {
+      clearRecapCooldownTimer();
+    };
+  }, [clearRecapCooldownTimer]);
+
   const playRecap = useCallback(async () => {
     if (!selectedMeeting?.summary) {
       showToast("No summary to recap", "info");
       return;
     }
+    if (recapLoading) {
+      showToast("AI brief is already processing. Please wait.", "info");
+      return;
+    }
+    const remainingMs = recapCooldownUntilRef.current - Date.now();
+    if (remainingMs > 0) {
+      const remainingSeconds = Math.ceil(remainingMs / 1000);
+      showToast(`AI brief is processing. Retry in ${remainingSeconds}s.`, "info");
+      return;
+    }
+
+    startRecapCooldown();
     setRecapLoading(true);
     try {
       const audioData = await generateAudioRecap(selectedMeeting.summary);
@@ -1988,7 +2112,7 @@ const App: React.FC = () => {
     } finally {
       setRecapLoading(false);
     }
-  }, [selectedMeeting, showToast]);
+  }, [recapLoading, selectedMeeting, showToast, startRecapCooldown]);
 
   const toggleRecapPlayback = useCallback(async () => {
     const audio = audioRef.current;
@@ -2040,6 +2164,12 @@ const App: React.FC = () => {
     ? "warming"
     : "idle";
 
+  const activeProcessingIndex = PROCESSING_PHASES.findIndex((phase) => phase.key === processingPhaseKey);
+  const activeProcessingPhase = activeProcessingIndex >= 0 ? PROCESSING_PHASES[activeProcessingIndex] : null;
+  const processingProgressPercent =
+    activeProcessingIndex >= 0 ? Math.round(((activeProcessingIndex + 1) / PROCESSING_PHASES.length) * 100) : 0;
+  const recapCoolingDown = recapCooldownRemaining > 0;
+
   const getBadgeClass = (state: "ok" | "warming" | "idle" | "blocked") => {
     if (state === "ok") return "border-emerald-500/40 bg-emerald-500/20 text-emerald-300";
     if (state === "warming") return "border-amber-500/40 bg-amber-500/20 text-amber-300";
@@ -2047,7 +2177,18 @@ const App: React.FC = () => {
     return "border-slate-500/40 bg-slate-500/20 text-slate-300";
   };
 
-  const layoutProps = { view, setView, theme, setTheme, searchQuery, setSearchQuery, toast };
+  const layoutProps = {
+    view,
+    setView,
+    theme,
+    setTheme,
+    searchQuery,
+    setSearchQuery,
+    toast,
+    accountLabel,
+    onSignOut,
+    isAuthBusy,
+  };
 
   const calendarProviders = [
     {
@@ -2080,68 +2221,226 @@ const App: React.FC = () => {
    * ------------------------------ */
 
   if (view === "landing") {
+    const isDarkTheme = theme === "dark";
+    const isMinimal = landingArtDirection === "minimal";
+    const isCinematic = landingArtDirection === "cinematic";
+    const isEnterprise = landingArtDirection === "enterprise";
     return (
       <div
-        className={`min-h-screen ${
-          theme === "dark" ? "bg-slate-950 text-white" : "bg-slate-50 text-slate-900"
-        } relative flex flex-col items-center justify-center p-6 max-[360px]:p-3 text-center transition-colors duration-300`}
+        className={`min-h-screen relative overflow-hidden transition-colors duration-300 ${
+          isDarkTheme
+            ? isCinematic
+              ? "bg-[#02031b] text-white"
+              : isMinimal
+              ? "bg-[#030a1f] text-white"
+              : "bg-[#02071f] text-white"
+            : "bg-slate-50 text-slate-900"
+        }`}
       >
-        <div className="relative z-10 max-w-5xl space-y-12 max-[360px]:space-y-8">
-          <header className="space-y-10 max-[360px]:space-y-7">
-            <div className="w-20 h-20 max-[360px]:w-14 max-[360px]:h-14 bg-indigo-600 rounded-[2rem] max-[360px]:rounded-2xl flex items-center justify-center text-white text-4xl max-[360px]:text-2xl font-black shadow-2xl mx-auto">
-              S
+        <div
+          className={`pointer-events-none absolute inset-0 ${
+            isDarkTheme
+              ? isCinematic
+                ? "bg-[radial-gradient(circle_at_15%_14%,rgba(56,189,248,0.32),transparent_34%),radial-gradient(circle_at_84%_22%,rgba(99,102,241,0.3),transparent_36%),radial-gradient(circle_at_80%_82%,rgba(244,114,182,0.2),transparent_44%)]"
+                : isMinimal
+                ? "bg-[radial-gradient(circle_at_16%_14%,rgba(34,211,238,0.15),transparent_36%),radial-gradient(circle_at_82%_80%,rgba(99,102,241,0.12),transparent_40%)]"
+                : "bg-[radial-gradient(circle_at_18%_16%,rgba(34,211,238,0.22),transparent_36%),radial-gradient(circle_at_82%_80%,rgba(99,102,241,0.2),transparent_40%)]"
+              : "bg-[radial-gradient(circle_at_18%_16%,rgba(14,165,233,0.16),transparent_36%),radial-gradient(circle_at_82%_80%,rgba(99,102,241,0.14),transparent_40%)]"
+          }`}
+        />
+        <div
+          className={`pointer-events-none absolute inset-0 [background-size:48px_48px] [background-image:linear-gradient(to_right,rgba(148,163,184,0.18)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.18)_1px,transparent_1px)] ${
+            isCinematic ? "opacity-[0.32]" : isMinimal ? "opacity-[0.12]" : "opacity-25"
+          }`}
+        />
+
+        <div className="relative z-10 min-h-screen flex items-center px-6 py-10 max-[360px]:px-3">
+          <section
+            className={`mx-auto w-full max-w-6xl rounded-[2.2rem] max-[360px]:rounded-2xl border p-6 sm:p-10 md:p-12 backdrop-blur-xl shadow-[0_45px_130px_-60px_rgba(2,6,23,0.95)] ${
+              isDarkTheme
+                ? isCinematic
+                  ? "bg-slate-950/45 border-violet-300/20"
+                  : isMinimal
+                  ? "bg-slate-950/45 border-cyan-200/10"
+                  : "bg-slate-950/55 border-cyan-300/15"
+                : "bg-white/85 border-slate-300/70"
+            }`}
+          >
+            <div className="mb-6 flex items-center justify-end">
+              <div className="inline-flex flex-wrap gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-1">
+                {LANDING_ART_DIRECTIONS.map((mode) => {
+                  const isActive = landingArtDirection === mode.id;
+                  return (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      onClick={() => setLandingArtDirection(mode.id)}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-[0.14em] transition ${
+                        isActive
+                          ? "bg-cyan-500/25 text-cyan-100 border border-cyan-300/40"
+                          : "text-slate-300 border border-transparent hover:text-white hover:bg-white/10"
+                      }`}
+                    >
+                      {mode.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <h1 className="text-4xl max-[360px]:text-3xl sm:text-6xl md:text-7xl font-black tracking-tighter leading-[0.95]">
-              ScribeAI<span className="text-indigo-500">.</span>
-            </h1>
-            <p className="text-base max-[360px]:text-sm sm:text-lg md:text-xl font-bold text-slate-400 max-w-2xl mx-auto px-2 sm:px-4 leading-relaxed">
-              Local-first recording + server-side AI processing. Responsive workspace built for mobile, tablet, and desktop.
-            </p>
-            
-            {/* RECOVERY BANNER */}
-            {sortedRecoverySessions.length > 0 && latestRecoverySessionId && (
-              <div className="max-w-md mx-auto bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl flex items-center justify-between gap-4">
-                <div className="text-left">
-                  <div className="text-amber-500 font-black text-xs uppercase tracking-widest">Crash Detected</div>
-                  <div className="text-slate-300 text-xs mt-1">Found {sortedRecoverySessions.length} unfinished recording(s).</div>
+
+            <div className={`grid gap-10 max-[360px]:gap-6 items-start ${isEnterprise ? "lg:grid-cols-[1.12fr_0.88fr]" : "lg:grid-cols-[1.08fr_0.92fr]"}`}>
+              <div className={`space-y-8 max-[360px]:space-y-6 ${isMinimal ? "max-w-3xl" : ""}`}>
+                <div
+                  className={`inline-flex items-center gap-3 rounded-2xl px-4 py-3 ${
+                    isCinematic
+                      ? "border border-fuchsia-300/35 bg-fuchsia-500/15"
+                      : isMinimal
+                      ? "border border-cyan-300/20 bg-cyan-500/8"
+                      : "border border-cyan-300/30 bg-cyan-500/10"
+                  }`}
+                >
+                  <img src={scribeAiLogo} alt="ScribeAI" className="h-9 sm:h-10 md:h-12 w-auto object-contain" />
+                  <span className="font-tech-label text-[10px] sm:text-[11px] uppercase tracking-[0.22em] text-cyan-100/90">
+                    Neural Workspace
+                  </span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => void recoverSession(latestRecoverySessionId)}
-                    disabled={Boolean(restoringSessionId)}
-                    className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wide transition disabled:opacity-60 disabled:cursor-not-allowed"
+
+                <div className="space-y-4">
+                  <h1
+                    className={`font-tech-display font-black tracking-tight ${
+                      isCinematic
+                        ? "text-5xl max-[360px]:text-3xl sm:text-6xl md:text-7xl lg:text-[5.3rem] leading-[0.88]"
+                        : isMinimal
+                        ? "text-4xl max-[360px]:text-3xl sm:text-5xl md:text-[3.4rem] lg:text-[3.9rem] leading-[0.98]"
+                        : "text-4xl max-[360px]:text-3xl sm:text-5xl md:text-6xl lg:text-7xl leading-[0.92]"
+                    }`}
                   >
-                    {restoringSessionId === latestRecoverySessionId ? "Restoring..." : "Recover"}
+                    Capture every voice.
+                    <br />
+                    Ship decisions faster.
+                  </h1>
+                  <p
+                    className={`max-w-2xl max-[360px]:text-sm font-semibold leading-relaxed ${
+                      isCinematic ? "text-lg sm:text-xl text-slate-300" : isMinimal ? "text-base sm:text-[1.02rem] text-slate-400/95" : "text-base sm:text-lg text-slate-400"
+                    }`}
+                  >
+                    Local-first recording + server-side AI processing. Responsive workspace built for mobile, tablet, and desktop.
+                  </p>
+                </div>
+
+                {sortedRecoverySessions.length > 0 && latestRecoverySessionId && (
+                  <div className="max-w-xl bg-amber-500/10 border border-amber-500/30 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="text-left">
+                      <div className="text-amber-400 font-black text-[10px] uppercase tracking-[0.2em]">Crash Detected</div>
+                      <div className="text-slate-300 text-xs mt-1">
+                        Found {sortedRecoverySessions.length} unfinished recording(s).
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => void recoverSession(latestRecoverySessionId)}
+                        disabled={Boolean(restoringSessionId)}
+                        className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-[0.12em] transition disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        {restoringSessionId === latestRecoverySessionId ? "Restoring..." : "Recover"}
+                      </button>
+                      <button
+                        onClick={() => void discardRecoverySession(latestRecoverySessionId)}
+                        disabled={Boolean(restoringSessionId)}
+                        className="border border-amber-500/40 text-amber-200 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-[0.12em] transition hover:bg-amber-500/10 disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <button
+                    onClick={() => setView("dashboard")}
+                    className={`px-7 sm:px-10 py-3.5 rounded-2xl font-tech-label font-black text-[11px] uppercase tracking-[0.18em] text-white shadow-lg transition active:scale-95 ${
+                      isCinematic
+                        ? "bg-gradient-to-r from-sky-500 via-indigo-500 to-fuchsia-500 hover:brightness-110"
+                        : isMinimal
+                        ? "bg-cyan-600 hover:bg-cyan-500"
+                        : "machine-cta hover:brightness-110"
+                    }`}
+                  >
+                    Open Hub
                   </button>
                   <button
-                    onClick={() => void discardRecoverySession(latestRecoverySessionId)}
-                    disabled={Boolean(restoringSessionId)}
-                    className="border border-amber-500/40 text-amber-200 px-3 py-2 rounded-xl text-xs font-bold uppercase tracking-wide transition hover:bg-amber-500/10 disabled:opacity-60 disabled:cursor-not-allowed"
+                    onClick={() => setView("help")}
+                    className={`px-7 sm:px-10 py-3.5 rounded-2xl font-tech-label font-black text-[11px] uppercase tracking-[0.16em] border transition active:scale-95 ${
+                      isDarkTheme
+                        ? isMinimal
+                          ? "bg-white/[0.03] text-slate-200 border-cyan-200/20 hover:bg-white/[0.06]"
+                          : "bg-white/5 text-white border-white/15 hover:bg-white/10"
+                        : "bg-slate-900/5 text-slate-900 border-slate-900/10 hover:bg-slate-900/10"
+                    }`}
                   >
-                    Dismiss
+                    Documentation
                   </button>
                 </div>
               </div>
-            )}
-            
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <button
-                onClick={() => setView("dashboard")}
-                className="bg-indigo-600 px-6 sm:px-10 py-3.5 rounded-full font-black text-sm sm:text-base text-white shadow-lg hover:bg-indigo-700 transition active:scale-95"
-              >
-                Open Hub
-              </button>
-              <button
-                onClick={() => setView("help")}
-                className="px-6 sm:px-10 py-3.5 rounded-full font-black text-sm sm:text-base
-                  bg-slate-900/5 text-slate-900 border border-slate-900/10
-                  dark:bg-white/5 dark:text-white dark:border-white/10
-                  hover:bg-slate-900/10 dark:hover:bg-white/10 transition active:scale-95"
-              >
-                Documentation
-              </button>
+
+              <div className="space-y-4 max-[360px]:space-y-3">
+                <div
+                  className={`rounded-3xl max-[360px]:rounded-2xl border p-6 max-[360px]:p-4 space-y-5 ${
+                    isCinematic
+                      ? "border-violet-300/25 bg-gradient-to-br from-indigo-950/70 via-slate-900/60 to-fuchsia-950/45"
+                      : isMinimal
+                      ? "border-cyan-200/12 bg-slate-950/35"
+                      : "border-white/10 bg-slate-900/45"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-tech-label text-[10px] uppercase tracking-[0.22em] text-cyan-300">Live pipeline</span>
+                    <span className={`text-[10px] font-black uppercase tracking-[0.18em] ${isMinimal ? "text-cyan-300" : "text-emerald-300"}`}>Ready</span>
+                  </div>
+                  <div className="space-y-3">
+                    {["Capture mic + meeting audio", "Detect speakers + transcribe", "Generate summary + actions"].map((item, idx) => (
+                      <div
+                        key={item}
+                        className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${
+                          isCinematic
+                            ? "border-white/12 bg-white/[0.05]"
+                            : isMinimal
+                            ? "border-cyan-200/10 bg-cyan-500/[0.04]"
+                            : "border-white/10 bg-white/[0.03]"
+                        }`}
+                      >
+                        <span
+                          className={`w-6 h-6 rounded-lg text-[10px] font-black flex items-center justify-center ${
+                            isCinematic
+                              ? "bg-fuchsia-500/25 text-fuchsia-200"
+                              : isMinimal
+                              ? "bg-cyan-500/20 text-cyan-200"
+                              : "bg-cyan-500/20 text-cyan-300"
+                          }`}
+                        >
+                          {idx + 1}
+                        </span>
+                        <span className="text-sm font-semibold text-slate-200">{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div
+                    className={`rounded-xl border px-3 py-2 ${
+                      isCinematic
+                        ? "border-fuchsia-300/25 bg-fuchsia-500/12"
+                        : isMinimal
+                        ? "border-cyan-300/16 bg-cyan-500/8"
+                        : "border-cyan-400/20 bg-cyan-500/10"
+                    }`}
+                  >
+                    <p className={`text-xs font-semibold ${isCinematic ? "text-fuchsia-100" : "text-cyan-100"}`}>
+                      One workspace for recording, diagnostics, recap, and follow-up.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
-          </header>
+          </section>
         </div>
       </div>
     );
@@ -2412,10 +2711,14 @@ const App: React.FC = () => {
               <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.2em]">Neural Engine Ready</span>
             </div>
             <h1 className="font-tech-display text-5xl max-[360px]:text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-black tracking-tight leading-[0.9]">
-              {isRecording ? "Listening." : isProcessing ? "Syncing." : "Studio."}
+              {isRecording ? "Listening." : isProcessing ? "Processing." : "Studio."}
             </h1>
             <p className="text-slate-500 dark:text-slate-400 text-sm font-bold">
-              {isRecording ? `Recording • ${formatTime(recordingTime)}` : isProcessing ? "Processing…" : "Tap to start"}
+              {isRecording
+                ? `Recording • ${formatTime(recordingTime)}`
+                : isProcessing
+                ? `${activeProcessingPhase?.label || "Processing"} • ${processingProgressPercent}%`
+                : "Tap to start"}
             </p>
           </div>
           <div className="flex items-center gap-3 max-[360px]:flex-col max-[360px]:items-stretch">
@@ -2438,6 +2741,44 @@ const App: React.FC = () => {
               ? "Screen wake lock is active while recording."
               : "If your phone sleeps, mobile browsers may pause capture. Keep the screen awake during sessions."}
           </p>
+          {isProcessing && activeProcessingPhase && (
+            <div className="machine-panel w-full max-w-3xl p-4 md:p-5 rounded-2xl space-y-4">
+              <div className="flex items-center justify-between gap-4">
+                <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-cyan-300">
+                  AI Processing Status
+                </p>
+                <span className="text-[11px] font-black text-cyan-300">{processingProgressPercent}%</span>
+              </div>
+              <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-indigo-500 transition-all duration-400"
+                  style={{ width: `${processingProgressPercent}%` }}
+                />
+              </div>
+              <p className="text-sm font-bold text-slate-200">{activeProcessingPhase.label}</p>
+              <p className="text-xs font-semibold text-slate-400">{activeProcessingPhase.detail}</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {PROCESSING_PHASES.map((phase, idx) => {
+                  const state =
+                    idx < activeProcessingIndex ? "done" : idx === activeProcessingIndex ? "active" : "pending";
+                  return (
+                    <div
+                      key={phase.key}
+                      className={`rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] border ${
+                        state === "done"
+                          ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
+                          : state === "active"
+                          ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-200"
+                          : "border-slate-600/30 bg-slate-900/40 text-slate-500"
+                      }`}
+                    >
+                      {phase.label}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {sortedRecoverySessions.length > 0 && latestRecoverySessionId && (
             <div className="machine-panel w-full max-w-3xl p-4 md:p-5 rounded-2xl space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -2760,11 +3101,22 @@ const App: React.FC = () => {
               <div className="space-y-3">
                 <button
                   onClick={playRecap}
-                  disabled={recapLoading}
+                  disabled={recapLoading || recapCoolingDown}
                   className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all disabled:opacity-50"
                 >
-                  {recapLoading ? "Synthesizing..." : "Play AI Brief"}
+                  {recapLoading
+                    ? "AI brief processing..."
+                    : recapCoolingDown
+                    ? `AI brief cooldown (${recapCooldownRemaining}s)`
+                    : "Play AI Brief"}
                 </button>
+                {(recapLoading || recapCoolingDown) && (
+                  <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                    {recapLoading
+                      ? "Synthesizing your voice recap. Please wait for completion."
+                      : `To prevent duplicate synthesis requests, wait ${recapCooldownRemaining}s before triggering again.`}
+                  </p>
+                )}
 
                 {recapAudioUrl && (
                   <div className="flex flex-wrap gap-3 items-center">

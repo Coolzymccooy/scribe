@@ -14,14 +14,14 @@
   "analyticsStore": {
     "endpoints": {
       "calendarUpcoming": {
-        "count": 67,
-        "totalDurationMs": 5,
+        "count": 381,
+        "totalDurationMs": 53,
         "errors": 0,
         "lastError": null
       },
       "autoListenSettings": {
-        "count": 55,
-        "totalDurationMs": 9,
+        "count": 96,
+        "totalDurationMs": 16,
         "errors": 0,
         "lastError": null
       },
@@ -32,20 +32,20 @@
         "lastError": null
       },
       "transcribe": {
-        "count": 9,
-        "totalDurationMs": 172854,
+        "count": 11,
+        "totalDurationMs": 193370,
         "errors": 0,
         "lastError": null
       },
       "analyze": {
-        "count": 9,
-        "totalDurationMs": 47618,
+        "count": 11,
+        "totalDurationMs": 54117,
         "errors": 0,
         "lastError": null
       },
       "audioRecap": {
-        "count": 2,
-        "totalDurationMs": 21081,
+        "count": 3,
+        "totalDurationMs": 33722,
         "errors": 0,
         "lastError": null
       },
@@ -57,10 +57,10 @@
       }
     },
     "autoListen": {
-      "toggles": 55,
-      "calendarSyncs": 67,
+      "toggles": 96,
+      "calendarSyncs": 381,
       "calendarErrors": 0,
-      "lastUpdated": "2026-02-15T16:28:45.946Z"
+      "lastUpdated": "2026-02-16T12:02:46.019Z"
     }
   }
 }

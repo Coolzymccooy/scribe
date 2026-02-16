@@ -5,6 +5,7 @@ import AuthScreen from "./components/AuthScreen";
 import {
   completeRedirectAuth,
   isFirebaseConfigured,
+  resendVerificationEmail,
   sendResetPasswordEmail,
   signInWithEmailPassword,
   signInWithGoogle,
@@ -19,9 +20,25 @@ const AppRoot: React.FC = () => {
   const [isBusy, setIsBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [verificationHint, setVerificationHint] = useState<string | null>(null);
+
+  const isUnverifiedEmailPasswordUser = useCallback((user: User) => {
+    const hasPasswordProvider = user.providerData.some((provider) => provider.providerId === "password");
+    return hasPasswordProvider && !user.emailVerified;
+  }, []);
 
   useEffect(() => {
     let isDisposed = false;
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("verified") === "email") {
+        setAuthNotice("Email verification received. Sign in to continue.");
+        params.delete("verified");
+        const next = params.toString();
+        const cleanUrl = `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash || ""}`;
+        window.history.replaceState({}, "", cleanUrl);
+      }
+    }
 
     const hydrateRedirectResult = async () => {
       try {
@@ -37,6 +54,17 @@ const AppRoot: React.FC = () => {
 
     const unsubscribe = subscribeToAuth((user) => {
       if (isDisposed) return;
+      if (user && isUnverifiedEmailPasswordUser(user)) {
+        setCurrentUser(null);
+        setAuthReady(true);
+        setVerificationHint(
+          `Verify ${user.email || "your email"} before access. After verification, return and click 'I've verified - continue'.`
+        );
+        void signOutUser().catch(() => {
+          // no-op
+        });
+        return;
+      }
       setCurrentUser(user);
       setAuthReady(true);
     });
@@ -45,11 +73,12 @@ const AppRoot: React.FC = () => {
       isDisposed = true;
       unsubscribe();
     };
-  }, []);
+  }, [isUnverifiedEmailPasswordUser]);
 
   const handleGoogleSignIn = useCallback(async () => {
     setAuthError(null);
     setAuthNotice(null);
+    setVerificationHint(null);
     setIsBusy(true);
     try {
       await signInWithGoogle();
@@ -63,6 +92,7 @@ const AppRoot: React.FC = () => {
   const handleSignOut = useCallback(async () => {
     setAuthError(null);
     setAuthNotice(null);
+    setVerificationHint(null);
     setIsBusy(true);
     try {
       await signOutUser();
@@ -76,6 +106,7 @@ const AppRoot: React.FC = () => {
   const handleEmailSignIn = useCallback(async (email: string, password: string) => {
     setAuthError(null);
     setAuthNotice(null);
+    setVerificationHint(null);
     setIsBusy(true);
     try {
       await signInWithEmailPassword(email, password);
@@ -89,10 +120,17 @@ const AppRoot: React.FC = () => {
   const handleEmailSignUp = useCallback(async (email: string, password: string) => {
     setAuthError(null);
     setAuthNotice(null);
+    setVerificationHint(null);
     setIsBusy(true);
     try {
-      await signUpWithEmailPassword(email, password);
-      setAuthNotice("Account created successfully.");
+      const user = await signUpWithEmailPassword(email, password);
+      const targetEmail = user.email || email.trim();
+      setVerificationHint(
+        `Verification email sent to ${targetEmail}. Open it, verify, then click 'I've verified - continue'.`
+      );
+      setAuthNotice(
+        "Check inbox/spam for your verification link. You must verify before app access."
+      );
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Account sign up failed.");
     } finally {
@@ -103,12 +141,37 @@ const AppRoot: React.FC = () => {
   const handleResetPassword = useCallback(async (email: string) => {
     setAuthError(null);
     setAuthNotice(null);
+    setVerificationHint(null);
     setIsBusy(true);
     try {
       await sendResetPasswordEmail(email);
       setAuthNotice("Password reset link sent. Check your inbox and spam folder.");
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Password reset failed.");
+    } finally {
+      setIsBusy(false);
+    }
+  }, []);
+
+  const handleResendVerification = useCallback(async (email: string, password: string) => {
+    setAuthError(null);
+    setAuthNotice(null);
+    setIsBusy(true);
+    try {
+      const result = await resendVerificationEmail(email, password);
+      if (result.alreadyVerified) {
+        setAuthNotice("This email is already verified. Click 'I've verified - continue' to enter.");
+        setVerificationHint(
+          `Verification already completed for ${result.email}. Continue to access your workspace.`
+        );
+      } else {
+        setAuthNotice(`Verification email resent to ${result.email}. Check inbox and spam.`);
+        setVerificationHint(
+          `A new verification email was sent to ${result.email}. After verifying, click 'I've verified - continue'.`
+        );
+      }
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Could not resend verification email.");
     } finally {
       setIsBusy(false);
     }
@@ -136,27 +199,18 @@ const AppRoot: React.FC = () => {
         onEmailSignIn={handleEmailSignIn}
         onEmailSignUp={handleEmailSignUp}
         onResetPassword={handleResetPassword}
+        onResendVerification={handleResendVerification}
+        verificationHint={verificationHint}
       />
     );
   }
 
   return (
-    <>
-      <div className="fixed top-4 right-4 max-[360px]:top-2 max-[360px]:right-2 z-[70] flex items-center gap-3 max-[360px]:gap-2 px-3 max-[360px]:px-2 py-2 max-[360px]:py-1.5 rounded-xl border border-white/10 bg-slate-900/80 text-white backdrop-blur-xl shadow-2xl max-[360px]:max-w-[95vw]">
-        <div className="max-w-[160px] max-[360px]:max-w-[110px] truncate text-[11px] max-[360px]:text-[9px] font-black uppercase tracking-[0.2em] max-[360px]:tracking-[0.12em] text-cyan-100">
-          {currentUser.displayName || currentUser.email || "Google User"}
-        </div>
-        <button
-          type="button"
-          onClick={handleSignOut}
-          disabled={isBusy}
-          className="px-3 max-[360px]:px-2 py-1.5 max-[360px]:py-1 rounded-lg bg-white text-slate-900 text-[10px] max-[360px]:text-[9px] font-black uppercase tracking-widest max-[360px]:tracking-[0.12em] disabled:opacity-60"
-        >
-          Sign out
-        </button>
-      </div>
-      <App />
-    </>
+    <App
+      accountLabel={currentUser.displayName || currentUser.email || "Google User"}
+      onSignOut={handleSignOut}
+      isAuthBusy={isBusy}
+    />
   );
 };
 

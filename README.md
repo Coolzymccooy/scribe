@@ -1,3 +1,14 @@
+## Session Log (February 16, 2026)
+
+- Fixed top-right header overlap by moving account/sign-out controls into the app top bar layout (removed floating auth chip conflict).
+- Increased sidebar brand visibility with moderately larger ScribeAI logo and label sizing.
+- Tuned header spacing so theme toggle, Studio Live, and account controls no longer collide across viewports.
+- Added permanent runtime state hygiene:
+  - stopped tracking `server/state.json`
+  - added `server/state.example.json` as the tracked template
+  - updated `.gitignore` to keep runtime state local-only.
+- Merged and pushed stable branch updates to `master` and `dev`.
+
 ## Session Log (February 15, 2026)
 
 - Added Firebase authentication integration with Google sign-in plus email/password sign-in, sign-up, and reset-password.

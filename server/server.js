@@ -1,7 +1,9 @@
-import express from 'express';
+﻿import express from 'express';
 import cors from 'cors';
 import fs from 'fs/promises';
 import path from 'path';
+import multer from 'multer';
+import { randomUUID } from 'crypto';
 import {
   transcribeAudio,
   analyzeMeeting,
@@ -24,7 +26,7 @@ dotenv.config();
  * configure these as environment variables in the service settings.
  */
 
-// 2️⃣ DEBUG CHECK (paste THIS right here)
+// 2ï¸âƒ£ DEBUG CHECK (paste THIS right here)
 console.log("ENV loaded:", { 
   hasGemini: Boolean(process.env.GEMINI_API_KEY),
   port: process.env.PORT,
@@ -34,7 +36,7 @@ console.log("ENV loaded:", {
 const app = express();
 const PORT = process.env.PORT || 3003;
 
-// 1️⃣ Core middleware first
+// 1ï¸âƒ£ Core middleware first
 app.use(express.json({ limit: '50mb' }));
 
 const allowedOrigins = process.env.CORS_ORIGINS
@@ -55,7 +57,7 @@ app.use(
   })
 );
 
-// 2️⃣ HEALTH CHECKS — PUT THEM HERE 👇
+// 2ï¸âƒ£ HEALTH CHECKS â€” PUT THEM HERE ðŸ‘‡
 app.get('/health', (req, res) => {
   res.status(200).send('ok');
 });
@@ -102,6 +104,25 @@ const createAnalyticsStore = () => ({
 
 const analyticsStore = createAnalyticsStore();
 
+const PROCESSING_JOB_TTL_MS = Number(process.env.PROCESSING_JOB_TTL_MS || 24 * 60 * 60 * 1000);
+const PROCESSING_QUEUE_PARALLELISM = Math.max(1, Number(process.env.PROCESSING_QUEUE_PARALLELISM || 1));
+const PROCESSING_TRANSCRIBE_TIMEOUT_MS = Number(process.env.PROCESSING_TRANSCRIBE_TIMEOUT_MS || 12 * 60 * 1000);
+const PROCESSING_SUMMARY_TIMEOUT_MS = Number(process.env.PROCESSING_SUMMARY_TIMEOUT_MS || 4 * 60 * 1000);
+const MAX_UPLOAD_BYTES = Number(process.env.MAX_AUDIO_UPLOAD_BYTES || 300 * 1024 * 1024);
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+});
+
+const createProcessingJobsStore = () => ({
+  byId: {},
+  queue: [],
+  active: 0,
+});
+
+const processingJobsStore = createProcessingJobsStore();
+
 const recordEndpointMetric = (name, durationMs, success, error) => {
   if (!analyticsStore.endpoints[name]) {
     analyticsStore.endpoints[name] = { count: 0, totalDurationMs: 0, errors: 0, lastError: null };
@@ -135,6 +156,223 @@ const buildAnalyticsResponse = () => {
   };
 };
 
+const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const withTimeout = async (promiseFactory, timeoutMs, label) => {
+  let timeoutId = null;
+  try {
+    return await Promise.race([
+      promiseFactory(),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
+const runWithRetries = async (taskFactory, options = {}) => {
+  const retries = Number.isFinite(options.retries) ? options.retries : 2;
+  const baseDelayMs = Number.isFinite(options.baseDelayMs) ? options.baseDelayMs : 1500;
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await taskFactory();
+    } catch (err) {
+      lastError = err;
+      if (attempt >= retries) break;
+      await waitMs(baseDelayMs * (attempt + 1));
+    }
+  }
+
+  throw lastError || new Error('Operation failed');
+};
+
+const toClientJob = (job) => ({
+  id: job.id,
+  status: job.status,
+  phase: job.phase,
+  progress: job.progress,
+  createdAt: job.createdAt,
+  updatedAt: job.updatedAt,
+  completedAt: job.completedAt || null,
+  error: job.error || null,
+  transcript: job.status === 'completed' ? job.transcript : null,
+  summary: job.status === 'completed' ? job.summary : null,
+});
+
+const serializeJobsForState = () => {
+  const jobs = {};
+  Object.values(processingJobsStore.byId).forEach((job) => {
+    jobs[job.id] = {
+      id: job.id,
+      status: job.status,
+      phase: job.phase,
+      progress: job.progress,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      completedAt: job.completedAt || null,
+      error: job.error || null,
+      transcript: job.status === 'completed' ? job.transcript : null,
+      summary: job.status === 'completed' ? job.summary : null,
+    };
+  });
+
+  return jobs;
+};
+
+const sanitizeSavedJobs = (savedJobs) => {
+  const hydrated = {};
+  Object.values(savedJobs || {}).forEach((jobLike) => {
+    if (!jobLike?.id) return;
+    const isDone = jobLike.status === 'completed';
+    const isFailed = jobLike.status === 'failed';
+    hydrated[jobLike.id] = {
+      id: jobLike.id,
+      status: isDone ? 'completed' : isFailed ? 'failed' : 'failed',
+      phase: isDone ? 'completed' : 'failed',
+      progress: isDone ? 100 : Math.min(99, Number(jobLike.progress || 0)),
+      createdAt: jobLike.createdAt || Date.now(),
+      updatedAt: Date.now(),
+      completedAt: jobLike.completedAt || null,
+      error: isDone ? null : jobLike.error || 'Server restarted before job completed. Please retry.',
+      transcript: isDone ? jobLike.transcript || null : null,
+      summary: isDone ? jobLike.summary || null : null,
+      audioBase64: null,
+      mimeType: null,
+      accent: null,
+    };
+  });
+  return hydrated;
+};
+
+const pruneOldProcessingJobs = () => {
+  const now = Date.now();
+  Object.entries(processingJobsStore.byId).forEach(([jobId, job]) => {
+    if (job.status !== 'completed' && job.status !== 'failed') return;
+    const referenceTime = job.completedAt || job.updatedAt || job.createdAt;
+    if (now - referenceTime > PROCESSING_JOB_TTL_MS) {
+      delete processingJobsStore.byId[jobId];
+    }
+  });
+};
+
+const updateProcessingJob = (jobId, patch) => {
+  const current = processingJobsStore.byId[jobId];
+  if (!current) return null;
+  const updated = {
+    ...current,
+    ...patch,
+    updatedAt: Date.now(),
+  };
+  processingJobsStore.byId[jobId] = updated;
+  scheduleAnalyticsPersist();
+  return updated;
+};
+
+const runProcessingJob = async (jobId) => {
+  const job = processingJobsStore.byId[jobId];
+  if (!job || job.status !== 'queued') return;
+
+  updateProcessingJob(jobId, {
+    status: 'processing',
+    phase: 'transcribe',
+    progress: 12,
+    error: null,
+  });
+
+  try {
+    const transcript = await runWithRetries(
+      () =>
+        withTimeout(
+          () => transcribeAudio(job.audioBase64, job.mimeType, job.accent || 'standard'),
+          PROCESSING_TRANSCRIBE_TIMEOUT_MS,
+          'Transcription'
+        ),
+      { retries: 2, baseDelayMs: 2500 }
+    );
+
+    updateProcessingJob(jobId, {
+      phase: 'summarize',
+      progress: 72,
+      transcript,
+      audioBase64: null,
+    });
+
+    const summary = await runWithRetries(
+      () =>
+        withTimeout(
+          () => analyzeMeeting(transcript, 'meeting', job.accent || 'standard'),
+          PROCESSING_SUMMARY_TIMEOUT_MS,
+          'Summarization'
+        ),
+      { retries: 1, baseDelayMs: 2000 }
+    );
+
+    updateProcessingJob(jobId, {
+      status: 'completed',
+      phase: 'completed',
+      progress: 100,
+      summary,
+      completedAt: Date.now(),
+      error: null,
+      audioBase64: null,
+    });
+  } catch (err) {
+    updateProcessingJob(jobId, {
+      status: 'failed',
+      phase: 'failed',
+      progress: 100,
+      completedAt: Date.now(),
+      error: err?.message || String(err || 'Processing failed'),
+      audioBase64: null,
+    });
+  }
+};
+
+const drainProcessingQueue = () => {
+  while (
+    processingJobsStore.active < PROCESSING_QUEUE_PARALLELISM &&
+    processingJobsStore.queue.length > 0
+  ) {
+    const nextJobId = processingJobsStore.queue.shift();
+    const queuedJob = processingJobsStore.byId[nextJobId];
+    if (!queuedJob || queuedJob.status !== 'queued') {
+      continue;
+    }
+
+    processingJobsStore.active += 1;
+    runProcessingJob(nextJobId)
+      .catch((err) => {
+        updateProcessingJob(nextJobId, {
+          status: 'failed',
+          phase: 'failed',
+          progress: 100,
+          completedAt: Date.now(),
+          error: err?.message || String(err || 'Processing failed'),
+        });
+      })
+      .finally(() => {
+        processingJobsStore.active = Math.max(0, processingJobsStore.active - 1);
+        pruneOldProcessingJobs();
+        scheduleAnalyticsPersist();
+        drainProcessingQueue();
+      });
+  }
+};
+
+const enqueueProcessingJob = (jobId) => {
+  processingJobsStore.queue.push(jobId);
+  scheduleAnalyticsPersist();
+  drainProcessingQueue();
+};
+
 const nowMs = () => Date.now();
 const iso = (d) => new Date(d).toISOString();
 
@@ -156,6 +394,7 @@ const persistState = async () => {
     tokenStore,
     autoListenStore,
     analyticsStore,
+    processingJobs: serializeJobsForState(),
   };
   await ensureStateDir();
   await fs.writeFile(STATE_FILE_PATH, JSON.stringify(payload, null, 2));
@@ -191,6 +430,11 @@ const applySavedState = (saved) => {
     analyticsStore.endpoints = saved.analyticsStore.endpoints || analyticsStore.endpoints;
     analyticsStore.autoListen = { ...analyticsStore.autoListen, ...saved.analyticsStore.autoListen };
   }
+  if (saved.processingJobs) {
+    processingJobsStore.byId = sanitizeSavedJobs(saved.processingJobs);
+    processingJobsStore.queue = [];
+    processingJobsStore.active = 0;
+  }
 };
 
 let analyticsDirty = false;
@@ -205,6 +449,13 @@ const scheduleAnalyticsPersist = () => {
     analyticsSaveTimer = null;
   }, 3000);
 };
+
+const processingJobsPruneTimer = setInterval(() => {
+  pruneOldProcessingJobs();
+  scheduleAnalyticsPersist();
+}, 10 * 60 * 1000);
+
+processingJobsPruneTimer.unref?.();
 
 const buildMicrosoftAuthUrl = () => {
   const clientId = process.env.MICROSOFT_CLIENT_ID;
@@ -571,7 +822,73 @@ app.get('/api/analytics', (req, res) => {
   }
 });
 
-// 3️⃣ API ROUTES
+// 3ï¸âƒ£ API ROUTES
+app.post('/api/processing-jobs', upload.single('audio'), async (req, res) => {
+  const timer = Date.now();
+  try {
+    const audioFile = req.file;
+    if (!audioFile?.buffer?.length) {
+      recordEndpointMetric('processingJobCreate', Date.now() - timer, false, new Error('Missing audio payload'));
+      return res.status(400).json({ error: 'Audio payload is required.' });
+    }
+
+    const accentRaw = String(req.body?.accent || 'standard').toLowerCase();
+    const accent = ['standard', 'uk', 'nigerian'].includes(accentRaw) ? accentRaw : 'standard';
+    const mimeType = String(req.body?.mimeType || audioFile.mimetype || 'audio/webm');
+    const audioBase64 = audioFile.buffer.toString('base64');
+    const jobId = randomUUID();
+
+    processingJobsStore.byId[jobId] = {
+      id: jobId,
+      status: 'queued',
+      phase: 'queued',
+      progress: 2,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      completedAt: null,
+      error: null,
+      transcript: null,
+      summary: null,
+      accent,
+      mimeType,
+      audioBase64,
+    };
+
+    enqueueProcessingJob(jobId);
+    recordEndpointMetric('processingJobCreate', Date.now() - timer, true);
+
+    res.status(202).json({
+      jobId,
+      status: 'queued',
+      phase: 'queued',
+      progress: 2,
+    });
+  } catch (err) {
+    console.error('PROCESSING JOB CREATE ERROR:', err);
+    recordEndpointMetric('processingJobCreate', Date.now() - timer, false, err);
+    res.status(500).json({ error: 'Failed to start processing job', details: err?.message || String(err) });
+  }
+});
+
+app.get('/api/processing-jobs/:jobId', (req, res) => {
+  const timer = Date.now();
+  try {
+    const jobId = String(req.params.jobId || '');
+    const job = processingJobsStore.byId[jobId];
+    if (!job) {
+      recordEndpointMetric('processingJobStatus', Date.now() - timer, false, new Error('Not found'));
+      return res.status(404).json({ error: 'Processing job not found' });
+    }
+
+    recordEndpointMetric('processingJobStatus', Date.now() - timer, true);
+    res.json({ job: toClientJob(job) });
+  } catch (err) {
+    recordEndpointMetric('processingJobStatus', Date.now() - timer, false, err);
+    res.status(500).json({ error: 'Failed to fetch processing job', details: err?.message || String(err) });
+  }
+});
+
+// API ROUTES
 app.post('/api/transcribe', async (req, res) => {
   const timer = Date.now();
   try {
@@ -661,6 +978,21 @@ app.post('/api/support', async (req, res) => {
   }
 });
 
+app.use((err, req, res, next) => {
+  if (!(err instanceof multer.MulterError)) {
+    return next(err);
+  }
+
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      error: 'Uploaded audio is too large.',
+      details: `Max allowed size is ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))}MB.`,
+    });
+  }
+
+  return res.status(400).json({ error: 'Upload failed', details: err.message });
+});
+
 
 const startServer = async () => {
   try {
@@ -676,3 +1008,4 @@ const startServer = async () => {
 };
 
 startServer();
+

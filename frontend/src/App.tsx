@@ -25,8 +25,9 @@ import {
 } from "./components/Icons";
 
 import {
-  analyzeMeeting,
-  transcribeAudio,
+  getProcessingJob,
+  startProcessingJob,
+  type ProcessingJob,
   generateEmailDraft,
   generateAudioRecap,
   askSupport,
@@ -118,18 +119,6 @@ const normalizeMimeTypeForTranscription = (mimeType: string) => {
   if (base === "video/webm") return "audio/webm";
   return base;
 };
-
-const fileToBase64Payload = (fileOrBlob: Blob) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = String(reader.result || "");
-      const parts = result.split(",");
-      resolve(parts[1] || "");
-    };
-    reader.onerror = () => reject(new Error("Failed to read audio"));
-    reader.readAsDataURL(fileOrBlob);
-  });
 
 const MAX_AUDIO_DURATION_SECONDS = 90 * 60;
 
@@ -336,6 +325,52 @@ const PROCESSING_PHASES = [
   { key: "summarize", label: "Generating summary", detail: "Extracting decisions, actions, and key points." },
   { key: "publish", label: "Publishing result", detail: "Saving your meeting note and opening details." },
 ] as const;
+
+type AccentMode = "standard" | "uk" | "nigerian";
+
+type PendingProcessingJob = {
+  jobId: string;
+  storageKey: string;
+  mimeType: string;
+  accent: AccentMode;
+  duration: number;
+  inputSource: string;
+  fallbackTitle: string;
+  preferredTitle?: string;
+};
+
+const ACTIVE_PROCESSING_JOB_KEY = "scribe_active_processing_job_v1";
+const PROCESSING_JOB_POLL_VISIBLE_MS = 1500;
+const PROCESSING_JOB_POLL_HIDDEN_MS = 5000;
+const PROCESSING_JOB_MAX_WAIT_MS = 2 * 60 * 60 * 1000;
+
+const parsePendingProcessingJob = (raw: string | null): PendingProcessingJob | null => {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed?.jobId || !parsed?.storageKey || !parsed?.mimeType) return null;
+    return {
+      jobId: String(parsed.jobId),
+      storageKey: String(parsed.storageKey),
+      mimeType: String(parsed.mimeType),
+      accent: (["standard", "uk", "nigerian"].includes(parsed.accent) ? parsed.accent : "standard") as AccentMode,
+      duration: Math.max(0, Number(parsed.duration || 0)),
+      inputSource: String(parsed.inputSource || "Uploaded File"),
+      fallbackTitle: String(parsed.fallbackTitle || "Recovered Session"),
+      preferredTitle: parsed.preferredTitle ? String(parsed.preferredTitle) : undefined,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const mapJobPhaseToUiPhase = (
+  phase: ProcessingJob["phase"] | null | undefined
+): (typeof PROCESSING_PHASES)[number]["key"] => {
+  if (phase === "transcribe") return "transcribe";
+  if (phase === "summarize") return "summarize";
+  return "finalize";
+};
 
 type LandingArtDirection = "minimal" | "cinematic" | "enterprise";
 
@@ -842,10 +877,11 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingPhaseKey, setProcessingPhaseKey] = useState<(typeof PROCESSING_PHASES)[number]["key"] | null>(null);
+  const [processingProgressOverride, setProcessingProgressOverride] = useState<number | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [accentMode, setAccentMode] = useState<"standard" | "uk" | "nigerian">("standard");
+  const [accentMode, setAccentMode] = useState<AccentMode>("standard");
   const [inputSource, setInputSource] = useState("Studio Mic");
   const [gateSensitivity, setGateSensitivity] = useState(75);
   const [audioInputDevices, setAudioInputDevices] = useState<MediaDeviceInfo[]>([]);
@@ -989,6 +1025,9 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
   const setProcessingPhase = useCallback((phaseKey: (typeof PROCESSING_PHASES)[number]["key"] | null) => {
     setProcessingPhaseKey(phaseKey);
+    if (phaseKey === null) {
+      setProcessingProgressOverride(null);
+    }
   }, []);
 
   const [integrations, setIntegrations] = useState<{ id: string; name: string; icon: string; connected: boolean }[]>([
@@ -1047,6 +1086,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
   const recordingStartedAtRef = useRef<number | null>(null);
   const recordingMimeTypeRef = useRef("audio/webm");
   const wakeLockRef = useRef<ScreenWakeLockSentinel | null>(null);
+  const processingPollTokenRef = useRef(0);
   const visibilityWarningShownRef = useRef(false);
   const [wakeLockActive, setWakeLockActive] = useState(false);
   const diagnosticsContextRef = useRef<AudioContext | null>(null);
@@ -1412,7 +1452,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
   useEffect(() => {
     if (!autoListenEnabled) return;
     loadUpcomingEvents();
-    const t = window.setInterval(loadUpcomingEvents, 30_000);
+    const t = window.setInterval(loadUpcomingEvents, 60_000);
     return () => window.clearInterval(t);
   }, [autoListenEnabled, loadUpcomingEvents]);
 
@@ -1472,6 +1512,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       void releaseWakeLock();
     }
   }, [isRecording, releaseWakeLock]);
+
+  useEffect(() => {
+    return () => {
+      processingPollTokenRef.current += 1;
+    };
+  }, []);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -1608,7 +1654,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
     };
 
     tick();
-    const t = window.setInterval(tick, 1_000);
+    const t = window.setInterval(tick, 3_000);
     return () => window.clearInterval(t);
   }, [autoListenEnabled, nextAutoListenEvent, autoListenLeadMinutes, isRecording, isProcessing]);
 
@@ -1674,6 +1720,216 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       setSupportChat((prev) => [...prev, { role: "model", text: "Neural link timeout." }]);
     }
   };
+
+  const createMeetingFromProcessingResult = useCallback(
+    ({
+      rawTranscript,
+      rawSummary,
+      storageKey,
+      duration,
+      accent,
+      inputSourceLabel,
+      fallbackTitle,
+      preferredTitle,
+    }: {
+      rawTranscript: any;
+      rawSummary: any;
+      storageKey: string;
+      duration: number;
+      accent: AccentMode;
+      inputSourceLabel: string;
+      fallbackTitle: string;
+      preferredTitle?: string;
+    }) => {
+      const transcriptSegments = normalizeTranscript(rawTranscript);
+      const summary = normalizeSummary(rawSummary);
+      const id = `m_${Date.now()}`;
+      const createdAtIso = new Date().toISOString();
+      const title =
+        preferredTitle?.trim() || safeTitleFromTranscript(transcriptSegments, fallbackTitle || "Untitled Session");
+
+      const newMeeting: MeetingNote = {
+        id,
+        title,
+        date: createdAtIso,
+        duration: Math.max(0, Math.round(duration)),
+        type: MeetingType.OTHER,
+        transcript: transcriptSegments,
+        summary,
+        tags: [],
+        accentPreference: accent,
+        audioStorageKey: storageKey,
+        chatHistory: [],
+        syncStatus: "local",
+        inputSource: inputSourceLabel,
+      };
+
+      setMeetings((prev) => [newMeeting, ...prev]);
+      setSelectedMeetingId(id);
+      setView("details");
+    },
+    []
+  );
+
+  const waitForProcessingJobCompletion = useCallback(
+    async (jobId: string): Promise<ProcessingJob> => {
+      const pollToken = ++processingPollTokenRef.current;
+      const startedAt = Date.now();
+
+      while (true) {
+        if (pollToken !== processingPollTokenRef.current) {
+          throw new Error("Processing polling cancelled.");
+        }
+
+        const job = await getProcessingJob(jobId);
+        if (job.phase === "completed") {
+          setProcessingPhase("publish");
+        } else {
+          setProcessingPhase(mapJobPhaseToUiPhase(job.phase));
+        }
+
+        const serverProgress = Number(job.progress);
+        if (Number.isFinite(serverProgress)) {
+          const bounded = Math.max(1, Math.min(100, Math.round(serverProgress)));
+          setProcessingProgressOverride(bounded);
+        }
+
+        if (job.status === "completed") {
+          return job;
+        }
+
+        if (job.status === "failed") {
+          throw new Error(job.error || "Processing failed.");
+        }
+
+        if (Date.now() - startedAt > PROCESSING_JOB_MAX_WAIT_MS) {
+          throw new Error("Processing exceeded expected wait time.");
+        }
+
+        const delay =
+          document.visibilityState === "visible" ? PROCESSING_JOB_POLL_VISIBLE_MS : PROCESSING_JOB_POLL_HIDDEN_MS;
+        await new Promise<void>((resolve) => window.setTimeout(resolve, delay));
+      }
+    },
+    [setProcessingPhase]
+  );
+
+  const runPendingProcessingJob = useCallback(
+    async (pending: PendingProcessingJob) => {
+      let effectivePending = pending;
+      localStorage.setItem(ACTIVE_PROCESSING_JOB_KEY, JSON.stringify(effectivePending));
+
+      const pollWithFallback = async (): Promise<ProcessingJob> => {
+        try {
+          return await waitForProcessingJobCompletion(effectivePending.jobId);
+        } catch (err) {
+          const errorMessage = String((err as Error)?.message || err || "");
+          const missingRemoteJob =
+            errorMessage.includes("(404)") || errorMessage.toLowerCase().includes("not found");
+          if (!missingRemoteJob) {
+            throw err;
+          }
+
+          const cachedAudio = await getAudioBlob(effectivePending.storageKey);
+          if (!cachedAudio) {
+            throw new Error("Saved audio was not found for resume.");
+          }
+
+          showToast("Server job expired. Restarting from saved audio...", "info");
+          const restarted = await startProcessingJob(cachedAudio, effectivePending.mimeType, effectivePending.accent);
+          effectivePending = { ...effectivePending, jobId: restarted.jobId };
+          localStorage.setItem(ACTIVE_PROCESSING_JOB_KEY, JSON.stringify(effectivePending));
+          return waitForProcessingJobCompletion(effectivePending.jobId);
+        }
+      };
+
+      const completedJob = await pollWithFallback();
+      if (completedJob.status !== "completed" || !completedJob.transcript || !completedJob.summary) {
+        throw new Error("Processing completed without transcript or summary.");
+      }
+
+      setProcessingPhase("publish");
+      setProcessingProgressOverride(99);
+      createMeetingFromProcessingResult({
+        rawTranscript: completedJob.transcript,
+        rawSummary: completedJob.summary,
+        storageKey: effectivePending.storageKey,
+        duration: effectivePending.duration,
+        accent: effectivePending.accent,
+        inputSourceLabel: effectivePending.inputSource,
+        fallbackTitle: effectivePending.fallbackTitle,
+        preferredTitle: effectivePending.preferredTitle,
+      });
+      localStorage.removeItem(ACTIVE_PROCESSING_JOB_KEY);
+    },
+    [createMeetingFromProcessingResult, showToast, waitForProcessingJobCompletion, setProcessingPhase]
+  );
+
+  const startProcessingForAudio = useCallback(
+    async ({
+      audioBlob,
+      mimeType,
+      storageKey,
+      accent,
+      duration,
+      inputSourceLabel,
+      fallbackTitle,
+      preferredTitle,
+    }: {
+      audioBlob: Blob;
+      mimeType: string;
+      storageKey: string;
+      accent: AccentMode;
+      duration: number;
+      inputSourceLabel: string;
+      fallbackTitle: string;
+      preferredTitle?: string;
+    }) => {
+      setProcessingPhase("transcribe");
+      setProcessingProgressOverride(5);
+
+      const createdJob = await startProcessingJob(audioBlob, mimeType, accent);
+      const pending: PendingProcessingJob = {
+        jobId: createdJob.jobId,
+        storageKey,
+        mimeType,
+        accent,
+        duration,
+        inputSource: inputSourceLabel,
+        fallbackTitle,
+        preferredTitle,
+      };
+
+      await runPendingProcessingJob(pending);
+    },
+    [runPendingProcessingJob, setProcessingPhase]
+  );
+
+  useEffect(() => {
+    if (isRecording || isProcessing) return;
+    const pending = parsePendingProcessingJob(localStorage.getItem(ACTIVE_PROCESSING_JOB_KEY));
+    if (!pending) return;
+
+    setIsProcessing(true);
+    setProcessingPhase("transcribe");
+    setProcessingProgressOverride(6);
+    showToast("Resuming unfinished AI processing...", "info");
+
+    void runPendingProcessingJob(pending)
+      .then(() => {
+        showToast("Recovered session processed", "success");
+      })
+      .catch((err) => {
+        console.error("PROCESSING RESUME ERROR:", err);
+        const message = String((err as Error)?.message || err || "Resume failed");
+        showToast(`Resume failed: ${message}`, "info");
+        localStorage.removeItem(ACTIVE_PROCESSING_JOB_KEY);
+      })
+      .finally(() => {
+        setIsProcessing(false);
+        setProcessingPhase(null);
+      });
+  }, [isRecording, isProcessing, runPendingProcessingJob, setProcessingPhase, showToast]);
 
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
@@ -1796,7 +2052,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
         setIsRecording(true);
       };
 
-      mediaRecorder.start(500);
+      mediaRecorder.start(4000);
       void requestWakeLock();
       showToast("Neural Capture (Auto-Save Active)", "info");
     } catch (err) {
@@ -1839,66 +2095,21 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
           setCurrentSessionId(null);
         }
 
-        const base64Audio = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const result = String(reader.result || "");
-            const parts = result.split(",");
-            resolve(parts[1] || "");
-          };
-          reader.onerror = () => reject(new Error("Failed to read audio"));
-          reader.readAsDataURL(audioBlob);
-        });
-
-        setProcessingPhase("transcribe");
         showToast("Transcribing recording...", "info");
-
-        // 1) Transcribe
-        const rawTranscript = await transcribeAudio(base64Audio, transcriptionMimeType, accentMode);
-
-        // Store transcript in UI-friendly segments
-        const transcriptSegments = normalizeTranscript(rawTranscript);
-
-        // 2) Analyze (send best payload to backend; your backend currently expects `transcript` any)
-        // Prefer sending a string if available, else join segments
-        const transcriptForBackend =
-          typeof rawTranscript === "string"
-            ? rawTranscript
-            : transcriptSegments.map((s) => s.text).join("\n");
-
-        setProcessingPhase("summarize");
-        const rawSummary = await analyzeMeeting(transcriptForBackend, "meeting", accentMode);
-        const summary = normalizeSummary(rawSummary);
-
-        // 3) Create meeting note matching your types.ts strictly
-        setProcessingPhase("publish");
-        const id = `m_${Date.now()}`;
-        const createdAtIso = new Date().toISOString();
-        const title = safeTitleFromTranscript(transcriptSegments, "New Recording");
-
-        const newMeeting: MeetingNote = {
-          id,
-          title,
-          date: createdAtIso,
+        await startProcessingForAudio({
+          audioBlob,
+          mimeType: transcriptionMimeType,
+          storageKey,
+          accent: accentMode,
           duration: computedDuration,
-          type: MeetingType.OTHER,
-          transcript: transcriptSegments,
-          summary,
-          tags: [],
-          accentPreference: accentMode,
-          audioStorageKey: storageKey,
-          chatHistory: [],
-          syncStatus: "local",
-          inputSource,
-        };
-
-        setMeetings((prev) => [newMeeting, ...prev]);
-        setSelectedMeetingId(id);
-        setView("details");
-
+          inputSourceLabel: inputSource,
+          fallbackTitle: "New Recording",
+        });
         showToast("Session processed", "success");
-      } catch {
-        showToast("AI synthesis interrupted", "info");
+      } catch (err) {
+        console.error(err);
+        const message = String((err as Error)?.message || err || "AI synthesis interrupted");
+        showToast(`AI synthesis interrupted: ${message}`, "info");
       } finally {
         setIsProcessing(false);
         setProcessingPhase(null);
@@ -1924,7 +2135,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       // no-op
     }
     recorder.stop();
-  }, [accentMode, cleanupRecordingResources, currentSessionId, inputSource, recordingTime, releaseWakeLock, setProcessingPhase, showToast]);
+  }, [accentMode, currentSessionId, inputSource, recordingTime, releaseWakeLock, setProcessingPhase, showToast, startProcessingForAudio]);
 
   const handleUploadAudio = useCallback(async (file: File) => {
     if (isProcessing || isRecording) return;
@@ -1933,10 +2144,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       setIsProcessing(true);
       setProcessingPhase("finalize");
 
+      const mediaDuration = await getMediaDuration(file);
+      const durationSeconds = mediaDuration !== null ? Math.max(0, Math.round(mediaDuration)) : 0;
+
       if (file.type.startsWith("video")) {
-        const duration = await getMediaDuration(file);
-        if (duration !== null) {
-          if (duration > MAX_AUDIO_DURATION_SECONDS) {
+        if (mediaDuration !== null) {
+          if (mediaDuration > MAX_AUDIO_DURATION_SECONDS) {
             showToast("Audio longer than 90 minutes is not recommended; please trim before upload.", "info");
           } else {
             showToast("Video validated; running transcription and analysis.", "info");
@@ -1956,52 +2169,18 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
         // storage failure shouldn't block analysis
       }
 
-      const base64Audio = await fileToBase64Payload(file);
-
-      setProcessingPhase("transcribe");
-      showToast("Transcribing upload...", "info");
-
-      // 1) Transcribe
-      const rawTranscript = await transcribeAudio(base64Audio, mimeType, accentMode);
-      const transcriptSegments = normalizeTranscript(rawTranscript);
-
-      // 2) Analyze
-      const transcriptForBackend =
-        typeof rawTranscript === 'string'
-          ? rawTranscript
-          : transcriptSegments.map((s) => s.text).join('\n');
-
-      setProcessingPhase("summarize");
-      const rawSummary = await analyzeMeeting(transcriptForBackend, 'meeting', accentMode);
-      const summary = normalizeSummary(rawSummary);
-
-      // 3) Create meeting note
-      setProcessingPhase("publish");
-      const id = `m_${Date.now()}`;
-      const createdAtIso = new Date().toISOString();
       const titleFromName = (file.name || 'Uploaded Audio').replace(/\.[^/.]+$/, '');
-      const title = titleFromName || safeTitleFromTranscript(transcriptSegments, 'Uploaded Audio');
-
-      const newMeeting: MeetingNote = {
-        id,
-        title,
-        date: createdAtIso,
-        duration: 0,
-        type: MeetingType.OTHER,
-        transcript: transcriptSegments,
-        summary,
-        tags: [],
-        accentPreference: accentMode,
-        audioStorageKey: storageKey,
-        chatHistory: [],
-        syncStatus: 'local',
-        inputSource: 'Uploaded File',
-      };
-
-      setMeetings((prev) => [newMeeting, ...prev]);
-      setSelectedMeetingId(id);
-      setView('details');
-
+      showToast("Transcribing upload...", "info");
+      await startProcessingForAudio({
+        audioBlob: file,
+        mimeType,
+        storageKey,
+        accent: accentMode,
+        duration: durationSeconds,
+        inputSourceLabel: "Uploaded File",
+        fallbackTitle: "Uploaded Audio",
+        preferredTitle: titleFromName || undefined,
+      });
       showToast('Upload processed', 'success');
 	    } catch (err: any) {
 	      console.error(err);
@@ -2011,7 +2190,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       setIsProcessing(false);
       setProcessingPhase(null);
     }
-  }, [accentMode, isProcessing, isRecording, setProcessingPhase, showToast]);
+  }, [accentMode, isProcessing, isRecording, setProcessingPhase, showToast, startProcessingForAudio]);
 
   const handleShareMeetingAudio = useCallback(async () => {
     try {
@@ -2062,7 +2241,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
         return;
       }
       setRecapCooldownRemaining(Math.ceil(remainingMs / 1000));
-    }, 400);
+    }, 1000);
   }, [clearRecapCooldownTimer]);
 
   useEffect(() => {
@@ -2147,7 +2326,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
     };
 
     tick();
-    const timer = window.setInterval(tick, 500);
+    const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
   }, [isRecording]);
 
@@ -2166,8 +2345,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
   const activeProcessingIndex = PROCESSING_PHASES.findIndex((phase) => phase.key === processingPhaseKey);
   const activeProcessingPhase = activeProcessingIndex >= 0 ? PROCESSING_PHASES[activeProcessingIndex] : null;
-  const processingProgressPercent =
+  const phaseBasedProgressPercent =
     activeProcessingIndex >= 0 ? Math.round(((activeProcessingIndex + 1) / PROCESSING_PHASES.length) * 100) : 0;
+  const processingProgressPercent =
+    processingProgressOverride !== null
+      ? Math.max(0, Math.min(100, processingProgressOverride))
+      : phaseBasedProgressPercent;
   const recapCoolingDown = recapCooldownRemaining > 0;
 
   const getBadgeClass = (state: "ok" | "warming" | "idle" | "blocked") => {

@@ -20,6 +20,77 @@ const getBaseUrl = (): string => {
   return import.meta.env.VITE_BACKEND_URL?.replace(/\/$/, '') || '';
 };
 
+const readErrorMessage = async (res: Response, fallback: string): Promise<string> => {
+  try {
+    const payload = await res.json();
+    const detail = payload?.details ? `: ${String(payload.details)}` : '';
+    const error = payload?.error ? String(payload.error) : fallback;
+    return `${error}${detail}`;
+  } catch {
+    return fallback;
+  }
+};
+
+export type ProcessingJobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+export type ProcessingJobPhase = 'queued' | 'transcribe' | 'summarize' | 'completed' | 'failed';
+
+export interface ProcessingJob {
+  id: string;
+  status: ProcessingJobStatus;
+  phase: ProcessingJobPhase;
+  progress: number;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+  error: string | null;
+  transcript: any | null;
+  summary: any | null;
+}
+
+export const startProcessingJob = async (
+  audioBlob: Blob,
+  mimeType: string,
+  accent: string
+): Promise<{ jobId: string; status: ProcessingJobStatus; phase: ProcessingJobPhase; progress: number }> => {
+  const form = new FormData();
+  const extension = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('wav') ? 'wav' : 'webm';
+  form.append('audio', audioBlob, `recording.${extension}`);
+  form.append('mimeType', mimeType);
+  form.append('accent', accent);
+
+  const res = await fetch(`${getBaseUrl()}/api/processing-jobs`, {
+    method: 'POST',
+    body: form,
+  });
+
+  if (!res.ok) {
+    const message = await readErrorMessage(res, `Failed to start processing job (${res.status})`);
+    throw new Error(message);
+  }
+
+  const payload = await res.json();
+  return {
+    jobId: String(payload?.jobId || ''),
+    status: payload?.status || 'queued',
+    phase: payload?.phase || 'queued',
+    progress: Number(payload?.progress || 0),
+  };
+};
+
+export const getProcessingJob = async (jobId: string): Promise<ProcessingJob> => {
+  const res = await fetch(`${getBaseUrl()}/api/processing-jobs/${encodeURIComponent(jobId)}`, {
+    method: 'GET',
+  });
+
+  if (!res.ok) {
+    const message = await readErrorMessage(res, `Failed to fetch processing job (${res.status})`);
+    throw new Error(message);
+  }
+
+  const payload = await res.json();
+  return payload?.job as ProcessingJob;
+};
+
 export const transcribeAudio = async (
   audio: string,
   mimeType: string,

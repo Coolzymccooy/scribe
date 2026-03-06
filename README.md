@@ -1,3 +1,21 @@
+## Session TODO (February 26, 2026)
+
+- Reliability Timeline + Smart Retry UX (impact: very high, effort: low-medium)
+- Battery-Aware Capture Mode (impact: very high, effort: medium)
+- Auto-Deliverables Pack: minutes, decisions, actions, follow-up email (impact: high, effort: medium)
+- Action-to-Execution Pipeline: Jira/Asana/Notion/Slack (impact: high, effort: medium)
+- Cross-Meeting Semantic Memory + search (impact: very high, effort: high)
+- Live Caption Mode with post-call correction (impact: high, effort: high)
+- Speaker Intelligence analytics (impact: medium-high, effort: medium-high)
+- Multilingual transcription + translation (impact: medium-high, effort: medium)
+- AI Meeting Copilot prompts (impact: medium-high, effort: high)
+- Enterprise security layer: SSO/RBAC/audit/retention (impact: high enterprise, effort: high)
+
+Top 3 delivery roadmap:
+1. Reliability Timeline + Smart Retry UX (2 weeks) - KPI: 10-90 min completion rate >99%; stuck-processing tickets down >70%.
+2. Battery-Aware Capture Mode (2-3 weeks) - KPI: mobile battery drain <8-10% per hour on target devices.
+3. Auto-Deliverables Pack (3 weeks) - KPI: meeting-to-shareable output under 2 minutes.
+
 ## Session Log (February 16, 2026)
 
 - Fixed top-right header overlap by moving account/sign-out controls into the app top bar layout (removed floating auth chip conflict).

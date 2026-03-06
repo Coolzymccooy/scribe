@@ -13,6 +13,7 @@ import {
   askSupport
 } from './geminiService.js';
 import dotenv from 'dotenv';
+import os from 'os';
 dotenv.config();
 
 
@@ -27,7 +28,7 @@ dotenv.config();
  */
 
 // 2ï¸âƒ£ DEBUG CHECK (paste THIS right here)
-console.log("ENV loaded:", { 
+console.log("ENV loaded:", {
   hasGemini: Boolean(process.env.GEMINI_API_KEY),
   port: process.env.PORT,
   cors: process.env.CORS_ORIGINS,
@@ -53,7 +54,7 @@ app.use(
       }
     },
     credentials: true,
-    methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   })
 );
 
@@ -111,7 +112,12 @@ const PROCESSING_SUMMARY_TIMEOUT_MS = Number(process.env.PROCESSING_SUMMARY_TIME
 const MAX_UPLOAD_BYTES = Number(process.env.MAX_AUDIO_UPLOAD_BYTES || 300 * 1024 * 1024);
 
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: os.tmpdir(),
+    filename: (req, file, cb) => {
+      cb(null, `${randomUUID()}-${file.originalname}`);
+    }
+  }),
   limits: { fileSize: MAX_UPLOAD_BYTES },
 });
 
@@ -244,7 +250,7 @@ const sanitizeSavedJobs = (savedJobs) => {
       error: isDone ? null : jobLike.error || 'Server restarted before job completed. Please retry.',
       transcript: isDone ? jobLike.transcript || null : null,
       summary: isDone ? jobLike.summary || null : null,
-      audioBase64: null,
+      audioFilePath: null, // cleared after completion
       mimeType: null,
       accent: null,
     };
@@ -291,7 +297,7 @@ const runProcessingJob = async (jobId) => {
     const transcript = await runWithRetries(
       () =>
         withTimeout(
-          () => transcribeAudio(job.audioBase64, job.mimeType, job.accent || 'standard'),
+          () => transcribeAudio(job.audioFilePath, job.mimeType, job.accent || 'standard'),
           PROCESSING_TRANSCRIBE_TIMEOUT_MS,
           'Transcription'
         ),
@@ -302,7 +308,7 @@ const runProcessingJob = async (jobId) => {
       phase: 'summarize',
       progress: 72,
       transcript,
-      audioBase64: null,
+      audioFilePath: null,
     });
 
     const summary = await runWithRetries(
@@ -322,7 +328,7 @@ const runProcessingJob = async (jobId) => {
       summary,
       completedAt: Date.now(),
       error: null,
-      audioBase64: null,
+      audioFilePath: null,
     });
   } catch (err) {
     updateProcessingJob(jobId, {
@@ -331,8 +337,14 @@ const runProcessingJob = async (jobId) => {
       progress: 100,
       completedAt: Date.now(),
       error: err?.message || String(err || 'Processing failed'),
-      audioBase64: null,
+      audioFilePath: null,
     });
+  } finally {
+    if (job.audioFilePath) {
+      fs.unlink(job.audioFilePath).catch((err) =>
+        console.error('Failed to cleanup temp audio file:', err)
+      );
+    }
   }
 };
 
@@ -827,7 +839,7 @@ app.post('/api/processing-jobs', upload.single('audio'), async (req, res) => {
   const timer = Date.now();
   try {
     const audioFile = req.file;
-    if (!audioFile?.buffer?.length) {
+    if (!audioFile?.path) {
       recordEndpointMetric('processingJobCreate', Date.now() - timer, false, new Error('Missing audio payload'));
       return res.status(400).json({ error: 'Audio payload is required.' });
     }
@@ -835,7 +847,7 @@ app.post('/api/processing-jobs', upload.single('audio'), async (req, res) => {
     const accentRaw = String(req.body?.accent || 'standard').toLowerCase();
     const accent = ['standard', 'uk', 'nigerian'].includes(accentRaw) ? accentRaw : 'standard';
     const mimeType = String(req.body?.mimeType || audioFile.mimetype || 'audio/webm');
-    const audioBase64 = audioFile.buffer.toString('base64');
+    const audioFilePath = audioFile.path;
     const jobId = randomUUID();
 
     processingJobsStore.byId[jobId] = {
@@ -851,7 +863,7 @@ app.post('/api/processing-jobs', upload.single('audio'), async (req, res) => {
       summary: null,
       accent,
       mimeType,
-      audioBase64,
+      audioFilePath,
     };
 
     enqueueProcessingJob(jobId);

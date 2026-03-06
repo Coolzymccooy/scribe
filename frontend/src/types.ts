@@ -66,7 +66,7 @@ export interface MeetingNote {
   accentPreference: "standard" | "uk" | "nigerian";
 
   inputSource?: string;
-  syncStatus?: "local" | "syncing" | "cloud";
+  syncStatus?: "local" | "syncing" | "cloud" | "offline";
 }
 
 export type ViewState =

@@ -1,4 +1,8 @@
 ﻿import { GoogleGenAI, Type, Modality } from '@google/genai';
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
+import crypto from 'crypto';
 
 /**
  * Gemini Service
@@ -124,7 +128,7 @@ const summarizeTranscriptChunk = async (ai, transcriptChunk, type, accent, label
   });
 };
 
-export async function transcribeAudio(audio, mimeType, accent) {
+export async function transcribeAudio(audioFilePath, mimeType, accent) {
   const ai = getClient();
   const prompt = `
     Listen carefully and transcribe in strict chronological order.
@@ -139,29 +143,57 @@ export async function transcribeAudio(audio, mimeType, accent) {
     6. If silence/no speech, return an empty array.
   `;
 
-  const response = await ai.models.generateContent({
-    model: TRANSCRIBE_MODEL,
-    contents: { parts: [{ inlineData: { mimeType, data: audio } }, { text: prompt }] },
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            id: { type: Type.STRING },
-            startTime: { type: Type.NUMBER },
-            endTime: { type: Type.NUMBER },
-            speaker: { type: Type.STRING },
-            text: { type: Type.STRING },
+  let uploadResult;
+  try {
+    uploadResult = await ai.files.upload({
+      file: audioFilePath,
+      mimeType: mimeType,
+    });
+
+    // Wait for the file to be processed
+    let fileState = await ai.files.get({ name: uploadResult.name });
+    while (fileState.state === 'PROCESSING') {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      fileState = await ai.files.get({ name: uploadResult.name });
+    }
+
+    if (fileState.state === 'FAILED') {
+      throw new Error('Gemini File processing failed.');
+    }
+
+    const response = await ai.models.generateContent({
+      model: TRANSCRIBE_MODEL,
+      contents: { parts: [{ fileData: { fileUri: uploadResult.uri, mimeType } }, { text: prompt }] },
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              startTime: { type: Type.NUMBER },
+              endTime: { type: Type.NUMBER },
+              speaker: { type: Type.STRING },
+              text: { type: Type.STRING },
+            },
+            required: ['id', 'startTime', 'endTime', 'speaker', 'text'],
           },
-          required: ['id', 'startTime', 'endTime', 'speaker', 'text'],
         },
       },
-    },
-  });
+    });
 
-  return safeJsonParse(response.text || '[]', []);
+    return safeJsonParse(response.text || '[]', []);
+  } finally {
+    // Clean up Gemini file
+    if (uploadResult && uploadResult.name) {
+      try {
+        await ai.files.delete({ name: uploadResult.name });
+      } catch (err) {
+        console.error('Failed to clean up Gemini file:', err);
+      }
+    }
+  }
 }
 
 export async function analyzeMeeting(transcript, type, accent) {

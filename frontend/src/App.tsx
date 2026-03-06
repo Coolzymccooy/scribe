@@ -259,8 +259,8 @@ const normalizeSummary = (raw: any): AISummary => {
     typeof raw === "string"
       ? raw
       : raw && typeof raw === "object"
-      ? String(raw.summary ?? raw.text ?? "")
-      : "";
+        ? String(raw.summary ?? raw.text ?? "")
+        : "";
 
   const cleaned = text.trim();
   return {
@@ -437,10 +437,9 @@ const SidebarItem: React.FC<{
   <button
     onClick={onClick}
     className={`machine-nav-item group relative w-full flex items-center gap-3 p-2.5 md:p-3 transition-all
-      ${
-        active
-          ? "machine-nav-item-active"
-          : ""
+      ${active
+        ? "machine-nav-item-active"
+        : ""
       }`}
   >
     <div className="transition-transform group-hover:scale-110 shrink-0">{icon}</div>
@@ -614,10 +613,9 @@ const Layout: React.FC<LayoutProps> = ({
               <button
                 onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
                 className={`p-2.5 rounded-full border transition-all
-                  ${
-                    theme === "dark"
-                      ? "bg-white/5 text-amber-400 border-white/10"
-                      : "machine-cta border-sky-300/40"
+                  ${theme === "dark"
+                    ? "bg-white/5 text-amber-400 border-white/10"
+                    : "machine-cta border-sky-300/40"
                   }`}
               >
                 {theme === "dark" ? "☀️" : "🌙"}
@@ -913,11 +911,11 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
         setUnfinishedSessions(prev => prev.filter(id => id !== sessionId));
         return;
       }
-      
+
       const blob = new Blob(chunks, { type: "audio/webm" });
       // Treat as uploaded file for processing
       await handleUploadAudio(new File([blob], `Recovered_${sessionId}.webm`, { type: "audio/webm" }));
-      
+
       // Cleanup
       await clearAudioChunks(sessionId);
       setUnfinishedSessions(prev => prev.filter(id => id !== sessionId));
@@ -1982,12 +1980,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
         try {
           const displayAudioTracks = currentDisplayStream.getAudioTracks();
           if (displayAudioTracks.length > 0) {
-             const systemStream = new MediaStream(displayAudioTracks);
-             const systemSource = ctx.createMediaStreamSource(systemStream);
-             const systemGain = ctx.createGain();
-             systemGain.gain.value = SYSTEM_RECORDING_GAIN;
-             systemSource.connect(systemGain);
-             systemGain.connect(mixBus);
+            const systemStream = new MediaStream(displayAudioTracks);
+            const systemSource = ctx.createMediaStreamSource(systemStream);
+            const systemGain = ctx.createGain();
+            systemGain.gain.value = SYSTEM_RECORDING_GAIN;
+            systemSource.connect(systemGain);
+            systemGain.connect(mixBus);
           }
         } catch (err) {
           console.warn("Could not mix system audio", err);
@@ -1998,9 +1996,9 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       try {
         const dummyOsc = ctx.createOscillator();
         const dummyGain = ctx.createGain();
-        dummyGain.gain.value = 0.001; 
+        dummyGain.gain.value = 0.001;
         dummyOsc.connect(dummyGain);
-        dummyGain.connect(ctx.destination); 
+        dummyGain.connect(ctx.destination);
         dummyOsc.start();
         (ctx as any)._dummyOsc = dummyOsc;
       } catch (err) {
@@ -2014,9 +2012,9 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       analyser.minDecibels = -96;
       analyser.maxDecibels = -6;
       analyserRef.current = analyser;
-      
+
       // FIX: Connect SOURCE to Analyser, NOT the Destination node
-      micGain.connect(analyser); 
+      micGain.connect(analyser);
 
       const recordingStream = destination.stream;
       const supportedMimeType = pickRecorderMimeType();
@@ -2026,19 +2024,19 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       mediaRecorderRef.current = mediaRecorder;
       recordingMimeTypeRef.current = mediaRecorder.mimeType || "audio/webm";
       audioChunksRef.current = [];
-      
+
       // AUTO-SAVE: Generate a Session ID
       const newSessionId = `session_${Date.now()}`;
       setCurrentSessionId(newSessionId);
 
       mediaRecorder.ondataavailable = async (e) => {
         if (e.data && e.data.size > 0) {
-           audioChunksRef.current.push(e.data);
-           try {
-             await appendAudioChunk(newSessionId, e.data);
-           } catch (err) {
-             console.error("Auto-save failed", err);
-           }
+          audioChunksRef.current.push(e.data);
+          try {
+            await appendAudioChunk(newSessionId, e.data);
+          } catch (err) {
+            console.error("Auto-save failed", err);
+          }
         }
       };
 
@@ -2095,17 +2093,40 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
           setCurrentSessionId(null);
         }
 
-        showToast("Transcribing recording...", "info");
-        await startProcessingForAudio({
-          audioBlob,
-          mimeType: transcriptionMimeType,
-          storageKey,
-          accent: accentMode,
-          duration: computedDuration,
-          inputSourceLabel: inputSource,
-          fallbackTitle: "New Recording",
-        });
-        showToast("Session processed", "success");
+        // OFFLINE MODE CHECK
+        const offlineFallbackTitle = "Offline Recording (Tap to Transcribe)";
+        if (!navigator.onLine) {
+          showToast("Offline Mode: Session saved locally. Push to transcribe when online.", "info");
+
+          // Create a placeholder local meeting that can be pushed later
+          const newMeeting: MeetingNote = {
+            id: `meeting_${Date.now()}`,
+            title: offlineFallbackTitle,
+            date: new Date(startedAt || Date.now()).toISOString(),
+            duration: computedDuration,
+            type: MeetingType.OTHER,
+            transcript: [],
+            tags: ["offline"],
+            audioStorageKey: storageKey,
+            accentPreference: accentMode,
+            inputSource: inputSource,
+            syncStatus: "offline",
+          };
+
+          setMeetings((prev) => [newMeeting, ...prev]);
+        } else {
+          showToast("Transcribing recording...", "info");
+          await startProcessingForAudio({
+            audioBlob,
+            mimeType: transcriptionMimeType,
+            storageKey,
+            accent: accentMode,
+            duration: computedDuration,
+            inputSourceLabel: inputSource,
+            fallbackTitle: offlineFallbackTitle,
+          });
+          showToast("Session processed", "success");
+        }
       } catch (err) {
         console.error(err);
         const message = String((err as Error)?.message || err || "AI synthesis interrupted");
@@ -2119,7 +2140,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
         try {
           await releaseWakeLock();
           if (audioContextRef.current && (audioContextRef.current as any)._dummyOsc) {
-            try { (audioContextRef.current as any)._dummyOsc.stop(); } catch {}
+            try { (audioContextRef.current as any)._dummyOsc.stop(); } catch { }
           }
           audioContextRef.current?.close();
         } catch {
@@ -2182,10 +2203,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
         preferredTitle: titleFromName || undefined,
       });
       showToast('Upload processed', 'success');
-	    } catch (err: any) {
-	      console.error(err);
-	      const msg = String(err?.message || err || 'Upload failed');
-	      showToast(`Upload failed: ${msg}`, 'info');
+    } catch (err: any) {
+      console.error(err);
+      const msg = String(err?.message || err || 'Upload failed');
+      showToast(`Upload failed: ${msg}`, 'info');
     } finally {
       setIsProcessing(false);
       setProcessingPhase(null);
@@ -2336,12 +2357,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
   const systemConfidenceState: "ok" | "warming" | "idle" | "blocked" = !diagnosticsEnabled
     ? "idle"
     : !hasSystemDiagnosticsInput
-    ? "blocked"
-    : systemConfidenceOk
-    ? "ok"
-    : systemLevel >= SYSTEM_CONFIDENCE_THRESHOLD
-    ? "warming"
-    : "idle";
+      ? "blocked"
+      : systemConfidenceOk
+        ? "ok"
+        : systemLevel >= SYSTEM_CONFIDENCE_THRESHOLD
+          ? "warming"
+          : "idle";
 
   const activeProcessingIndex = PROCESSING_PHASES.findIndex((phase) => phase.key === processingPhaseKey);
   const activeProcessingPhase = activeProcessingIndex >= 0 ? PROCESSING_PHASES[activeProcessingIndex] : null;
@@ -2410,44 +2431,40 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
     const isEnterprise = landingArtDirection === "enterprise";
     return (
       <div
-        className={`min-h-screen relative overflow-hidden transition-colors duration-300 ${
-          isDarkTheme
-            ? isCinematic
-              ? "bg-[#02031b] text-white"
-              : isMinimal
+        className={`min-h-screen relative overflow-hidden transition-colors duration-300 ${isDarkTheme
+          ? isCinematic
+            ? "bg-[#02031b] text-white"
+            : isMinimal
               ? "bg-[#030a1f] text-white"
               : "bg-[#02071f] text-white"
-            : "bg-slate-50 text-slate-900"
-        }`}
+          : "bg-slate-50 text-slate-900"
+          }`}
       >
         <div
-          className={`pointer-events-none absolute inset-0 ${
-            isDarkTheme
-              ? isCinematic
-                ? "bg-[radial-gradient(circle_at_15%_14%,rgba(56,189,248,0.32),transparent_34%),radial-gradient(circle_at_84%_22%,rgba(99,102,241,0.3),transparent_36%),radial-gradient(circle_at_80%_82%,rgba(244,114,182,0.2),transparent_44%)]"
-                : isMinimal
+          className={`pointer-events-none absolute inset-0 ${isDarkTheme
+            ? isCinematic
+              ? "bg-[radial-gradient(circle_at_15%_14%,rgba(56,189,248,0.32),transparent_34%),radial-gradient(circle_at_84%_22%,rgba(99,102,241,0.3),transparent_36%),radial-gradient(circle_at_80%_82%,rgba(244,114,182,0.2),transparent_44%)]"
+              : isMinimal
                 ? "bg-[radial-gradient(circle_at_16%_14%,rgba(34,211,238,0.15),transparent_36%),radial-gradient(circle_at_82%_80%,rgba(99,102,241,0.12),transparent_40%)]"
                 : "bg-[radial-gradient(circle_at_18%_16%,rgba(34,211,238,0.22),transparent_36%),radial-gradient(circle_at_82%_80%,rgba(99,102,241,0.2),transparent_40%)]"
-              : "bg-[radial-gradient(circle_at_18%_16%,rgba(14,165,233,0.16),transparent_36%),radial-gradient(circle_at_82%_80%,rgba(99,102,241,0.14),transparent_40%)]"
-          }`}
+            : "bg-[radial-gradient(circle_at_18%_16%,rgba(14,165,233,0.16),transparent_36%),radial-gradient(circle_at_82%_80%,rgba(99,102,241,0.14),transparent_40%)]"
+            }`}
         />
         <div
-          className={`pointer-events-none absolute inset-0 [background-size:48px_48px] [background-image:linear-gradient(to_right,rgba(148,163,184,0.18)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.18)_1px,transparent_1px)] ${
-            isCinematic ? "opacity-[0.32]" : isMinimal ? "opacity-[0.12]" : "opacity-25"
-          }`}
+          className={`pointer-events-none absolute inset-0 [background-size:48px_48px] [background-image:linear-gradient(to_right,rgba(148,163,184,0.18)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.18)_1px,transparent_1px)] ${isCinematic ? "opacity-[0.32]" : isMinimal ? "opacity-[0.12]" : "opacity-25"
+            }`}
         />
 
         <div className="relative z-10 min-h-screen flex items-center px-6 py-10 max-[360px]:px-3">
           <section
-            className={`mx-auto w-full max-w-6xl rounded-[2.2rem] max-[360px]:rounded-2xl border p-6 sm:p-10 md:p-12 backdrop-blur-xl shadow-[0_45px_130px_-60px_rgba(2,6,23,0.95)] ${
-              isDarkTheme
-                ? isCinematic
-                  ? "bg-slate-950/45 border-violet-300/20"
-                  : isMinimal
+            className={`mx-auto w-full max-w-6xl rounded-[2.2rem] max-[360px]:rounded-2xl border p-6 sm:p-10 md:p-12 backdrop-blur-xl shadow-[0_45px_130px_-60px_rgba(2,6,23,0.95)] ${isDarkTheme
+              ? isCinematic
+                ? "bg-slate-950/45 border-violet-300/20"
+                : isMinimal
                   ? "bg-slate-950/45 border-cyan-200/10"
                   : "bg-slate-950/55 border-cyan-300/15"
-                : "bg-white/85 border-slate-300/70"
-            }`}
+              : "bg-white/85 border-slate-300/70"
+              }`}
           >
             <div className="mb-6 flex items-center justify-end">
               <div className="inline-flex flex-wrap gap-2 rounded-xl border border-white/10 bg-white/[0.04] p-1">
@@ -2458,11 +2475,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                       key={mode.id}
                       type="button"
                       onClick={() => setLandingArtDirection(mode.id)}
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-[0.14em] transition ${
-                        isActive
-                          ? "bg-cyan-500/25 text-cyan-100 border border-cyan-300/40"
-                          : "text-slate-300 border border-transparent hover:text-white hover:bg-white/10"
-                      }`}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-[0.14em] transition ${isActive
+                        ? "bg-cyan-500/25 text-cyan-100 border border-cyan-300/40"
+                        : "text-slate-300 border border-transparent hover:text-white hover:bg-white/10"
+                        }`}
                     >
                       {mode.label}
                     </button>
@@ -2474,13 +2490,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
             <div className={`grid gap-10 max-[360px]:gap-6 items-start ${isEnterprise ? "lg:grid-cols-[1.12fr_0.88fr]" : "lg:grid-cols-[1.08fr_0.92fr]"}`}>
               <div className={`space-y-8 max-[360px]:space-y-6 ${isMinimal ? "max-w-3xl" : ""}`}>
                 <div
-                  className={`inline-flex items-center gap-3 rounded-2xl px-4 py-3 ${
-                    isCinematic
-                      ? "border border-fuchsia-300/35 bg-fuchsia-500/15"
-                      : isMinimal
+                  className={`inline-flex items-center gap-3 rounded-2xl px-4 py-3 ${isCinematic
+                    ? "border border-fuchsia-300/35 bg-fuchsia-500/15"
+                    : isMinimal
                       ? "border border-cyan-300/20 bg-cyan-500/8"
                       : "border border-cyan-300/30 bg-cyan-500/10"
-                  }`}
+                    }`}
                 >
                   <img src={scribeAiLogo} alt="ScribeAI" className="h-9 sm:h-10 md:h-12 w-auto object-contain" />
                   <span className="font-tech-label text-[10px] sm:text-[11px] uppercase tracking-[0.22em] text-cyan-100/90">
@@ -2490,22 +2505,20 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
                 <div className="space-y-4">
                   <h1
-                    className={`font-tech-display font-black tracking-tight ${
-                      isCinematic
-                        ? "text-5xl max-[360px]:text-3xl sm:text-6xl md:text-7xl lg:text-[5.3rem] leading-[0.88]"
-                        : isMinimal
+                    className={`font-tech-display font-black tracking-tight ${isCinematic
+                      ? "text-5xl max-[360px]:text-3xl sm:text-6xl md:text-7xl lg:text-[5.3rem] leading-[0.88]"
+                      : isMinimal
                         ? "text-4xl max-[360px]:text-3xl sm:text-5xl md:text-[3.4rem] lg:text-[3.9rem] leading-[0.98]"
                         : "text-4xl max-[360px]:text-3xl sm:text-5xl md:text-6xl lg:text-7xl leading-[0.92]"
-                    }`}
+                      }`}
                   >
                     Capture every voice.
                     <br />
                     Ship decisions faster.
                   </h1>
                   <p
-                    className={`max-w-2xl max-[360px]:text-sm font-semibold leading-relaxed ${
-                      isCinematic ? "text-lg sm:text-xl text-slate-300" : isMinimal ? "text-base sm:text-[1.02rem] text-slate-400/95" : "text-base sm:text-lg text-slate-400"
-                    }`}
+                    className={`max-w-2xl max-[360px]:text-sm font-semibold leading-relaxed ${isCinematic ? "text-lg sm:text-xl text-slate-300" : isMinimal ? "text-base sm:text-[1.02rem] text-slate-400/95" : "text-base sm:text-lg text-slate-400"
+                      }`}
                   >
                     Local-first recording + server-side AI processing. Responsive workspace built for mobile, tablet, and desktop.
                   </p>
@@ -2541,25 +2554,23 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 <div className="flex flex-col sm:flex-row gap-4">
                   <button
                     onClick={() => setView("dashboard")}
-                    className={`px-7 sm:px-10 py-3.5 rounded-2xl font-tech-label font-black text-[11px] uppercase tracking-[0.18em] text-white shadow-lg transition active:scale-95 ${
-                      isCinematic
-                        ? "bg-gradient-to-r from-sky-500 via-indigo-500 to-fuchsia-500 hover:brightness-110"
-                        : isMinimal
+                    className={`px-7 sm:px-10 py-3.5 rounded-2xl font-tech-label font-black text-[11px] uppercase tracking-[0.18em] text-white shadow-lg transition active:scale-95 ${isCinematic
+                      ? "bg-gradient-to-r from-sky-500 via-indigo-500 to-fuchsia-500 hover:brightness-110"
+                      : isMinimal
                         ? "bg-cyan-600 hover:bg-cyan-500"
                         : "machine-cta hover:brightness-110"
-                    }`}
+                      }`}
                   >
                     Open Hub
                   </button>
                   <button
                     onClick={() => setView("help")}
-                    className={`px-7 sm:px-10 py-3.5 rounded-2xl font-tech-label font-black text-[11px] uppercase tracking-[0.16em] border transition active:scale-95 ${
-                      isDarkTheme
-                        ? isMinimal
-                          ? "bg-white/[0.03] text-slate-200 border-cyan-200/20 hover:bg-white/[0.06]"
-                          : "bg-white/5 text-white border-white/15 hover:bg-white/10"
-                        : "bg-slate-900/5 text-slate-900 border-slate-900/10 hover:bg-slate-900/10"
-                    }`}
+                    className={`px-7 sm:px-10 py-3.5 rounded-2xl font-tech-label font-black text-[11px] uppercase tracking-[0.16em] border transition active:scale-95 ${isDarkTheme
+                      ? isMinimal
+                        ? "bg-white/[0.03] text-slate-200 border-cyan-200/20 hover:bg-white/[0.06]"
+                        : "bg-white/5 text-white border-white/15 hover:bg-white/10"
+                      : "bg-slate-900/5 text-slate-900 border-slate-900/10 hover:bg-slate-900/10"
+                      }`}
                   >
                     Documentation
                   </button>
@@ -2568,13 +2579,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
               <div className="space-y-4 max-[360px]:space-y-3">
                 <div
-                  className={`rounded-3xl max-[360px]:rounded-2xl border p-6 max-[360px]:p-4 space-y-5 ${
-                    isCinematic
-                      ? "border-violet-300/25 bg-gradient-to-br from-indigo-950/70 via-slate-900/60 to-fuchsia-950/45"
-                      : isMinimal
+                  className={`rounded-3xl max-[360px]:rounded-2xl border p-6 max-[360px]:p-4 space-y-5 ${isCinematic
+                    ? "border-violet-300/25 bg-gradient-to-br from-indigo-950/70 via-slate-900/60 to-fuchsia-950/45"
+                    : isMinimal
                       ? "border-cyan-200/12 bg-slate-950/35"
                       : "border-white/10 bg-slate-900/45"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center justify-between">
                     <span className="font-tech-label text-[10px] uppercase tracking-[0.22em] text-cyan-300">Live pipeline</span>
@@ -2584,22 +2594,20 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                     {["Capture mic + meeting audio", "Detect speakers + transcribe", "Generate summary + actions"].map((item, idx) => (
                       <div
                         key={item}
-                        className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${
-                          isCinematic
-                            ? "border-white/12 bg-white/[0.05]"
-                            : isMinimal
+                        className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 ${isCinematic
+                          ? "border-white/12 bg-white/[0.05]"
+                          : isMinimal
                             ? "border-cyan-200/10 bg-cyan-500/[0.04]"
                             : "border-white/10 bg-white/[0.03]"
-                        }`}
+                          }`}
                       >
                         <span
-                          className={`w-6 h-6 rounded-lg text-[10px] font-black flex items-center justify-center ${
-                            isCinematic
-                              ? "bg-fuchsia-500/25 text-fuchsia-200"
-                              : isMinimal
+                          className={`w-6 h-6 rounded-lg text-[10px] font-black flex items-center justify-center ${isCinematic
+                            ? "bg-fuchsia-500/25 text-fuchsia-200"
+                            : isMinimal
                               ? "bg-cyan-500/20 text-cyan-200"
                               : "bg-cyan-500/20 text-cyan-300"
-                          }`}
+                            }`}
                         >
                           {idx + 1}
                         </span>
@@ -2608,13 +2616,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                     ))}
                   </div>
                   <div
-                    className={`rounded-xl border px-3 py-2 ${
-                      isCinematic
-                        ? "border-fuchsia-300/25 bg-fuchsia-500/12"
-                        : isMinimal
+                    className={`rounded-xl border px-3 py-2 ${isCinematic
+                      ? "border-fuchsia-300/25 bg-fuchsia-500/12"
+                      : isMinimal
                         ? "border-cyan-300/16 bg-cyan-500/8"
                         : "border-cyan-400/20 bg-cyan-500/10"
-                    }`}
+                      }`}
                   >
                     <p className={`text-xs font-semibold ${isCinematic ? "text-fuchsia-100" : "text-cyan-100"}`}>
                       One workspace for recording, diagnostics, recap, and follow-up.
@@ -2652,38 +2659,38 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
               </div>
 
               <div className="flex items-center gap-3">
-              <button
-                onClick={async () => {
-                  setView("recorder");
-                  showToast("Ready to capture. Tap mic to allow access.", "info");
-                  // Browser mic access still requires user gesture.
-                  // We can safely start recording here because this click IS a gesture.
-                  try {
-                    await startRecording();
-                  } catch {
-                    // If permissions block, user can tap the mic button.
-                  }
-                }}
-                disabled={isRecording || isProcessing}
-                className="px-5 py-3 rounded-2xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-indigo-700 transition disabled:opacity-50"
-              >
-                Start Listening
-              </button>
-              {nextAutoListenEvent.joinUrl && (
-                <a
-                  href={nextAutoListenEvent.joinUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-5 py-3 rounded-2xl border border-white/20 bg-white/90 text-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-white transition"
+                <button
+                  onClick={async () => {
+                    setView("recorder");
+                    showToast("Ready to capture. Tap mic to allow access.", "info");
+                    // Browser mic access still requires user gesture.
+                    // We can safely start recording here because this click IS a gesture.
+                    try {
+                      await startRecording();
+                    } catch {
+                      // If permissions block, user can tap the mic button.
+                    }
+                  }}
+                  disabled={isRecording || isProcessing}
+                  className="px-5 py-3 rounded-2xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-indigo-700 transition disabled:opacity-50"
                 >
-                  Join Meeting
-                </a>
-              )}
-              <button
-                onClick={() => {
-                  setDismissedEventIds((prev) => Array.from(new Set([...prev, autoListenBannerId])));
-                  setAutoListenBannerId(null);
-                }}
+                  Start Listening
+                </button>
+                {nextAutoListenEvent.joinUrl && (
+                  <a
+                    href={nextAutoListenEvent.joinUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-5 py-3 rounded-2xl border border-white/20 bg-white/90 text-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-white transition"
+                  >
+                    Join Meeting
+                  </a>
+                )}
+                <button
+                  onClick={() => {
+                    setDismissedEventIds((prev) => Array.from(new Set([...prev, autoListenBannerId])));
+                    setAutoListenBannerId(null);
+                  }}
                   className="px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-white/80 text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition"
                 >
                   Dismiss
@@ -2697,10 +2704,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       {/* DASHBOARD */}
       {view === "dashboard" && (
         <div className="max-w-7xl mx-auto space-y-10 max-[360px]:space-y-6">
-          <header className="flex flex-col sm:flex-row justify-between items-center sm:items-end gap-6">
-            <div className="space-y-2 text-center sm:text-left">
+          <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-6">
+            <div className="space-y-2 text-left">
               <h1 className="text-4xl max-[360px]:text-3xl sm:text-5xl md:text-7xl font-black tracking-tighter uppercase">Workspace.</h1>
-              <div className="flex items-center justify-center sm:justify-start gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">
+              <div className="flex items-center justify-start gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></div>
                 <span>Local Cache Active</span>
               </div>
@@ -2718,36 +2725,36 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
             </div>
           </header>
 
-          <nav className="flex space-x-8 border-b border-slate-200 dark:border-white/5 overflow-x-auto pb-1">
+          <nav className="flex flex-col sm:flex-row gap-2 sm:gap-0 sm:space-x-8 border-b-0 sm:border-b border-slate-200 dark:border-white/5 overflow-x-auto pb-1 mt-4 sm:mt-0">
             <button
               onClick={() => setWorkspaceTab("personal")}
-              className={`pb-4 text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                workspaceTab === "personal"
-                  ? "text-indigo-500 border-b-2 border-indigo-500"
-                  : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
-              }`}
+              className={`p-3 sm:p-0 sm:pb-4 text-left sm:text-center rounded-xl sm:rounded-none text-[10px] sm:text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex items-center justify-between sm:block ${workspaceTab === "personal"
+                ? "text-indigo-500 sm:border-b-2 border-indigo-500 bg-indigo-500/10 sm:bg-transparent"
+                : "text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100/50 dark:bg-white/5 sm:bg-transparent"
+                }`}
             >
-              Personal Cache
+              <span>Personal Cache</span>
+              {workspaceTab === "personal" && <span className="sm:hidden text-indigo-500 tracking-[0.2em] text-[8px]">ACTIVE</span>}
             </button>
             <button
               onClick={() => setWorkspaceTab("cloud")}
-              className={`pb-4 text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                workspaceTab === "cloud"
-                  ? "text-indigo-500 border-b-2 border-indigo-500"
-                  : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
-              }`}
+              className={`p-3 sm:p-0 sm:pb-4 text-left sm:text-center rounded-xl sm:rounded-none text-[10px] sm:text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex items-center justify-between sm:block ${workspaceTab === "cloud"
+                ? "text-indigo-500 sm:border-b-2 border-indigo-500 bg-indigo-500/10 sm:bg-transparent"
+                : "text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100/50 dark:bg-white/5 sm:bg-transparent"
+                }`}
             >
-              Neural Cloud
+              <span>Neural Cloud</span>
+              {workspaceTab === "cloud" && <span className="sm:hidden text-indigo-500 tracking-[0.2em] text-[8px]">ACTIVE</span>}
             </button>
             <button
               onClick={() => setWorkspaceTab("enterprise")}
-              className={`pb-4 text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
-                workspaceTab === "enterprise"
-                  ? "text-indigo-500 border-b-2 border-indigo-500"
-                  : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
-              }`}
+              className={`p-3 sm:p-0 sm:pb-4 text-left sm:text-center rounded-xl sm:rounded-none text-[10px] sm:text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex items-center justify-between sm:block ${workspaceTab === "enterprise"
+                ? "text-indigo-500 sm:border-b-2 border-indigo-500 bg-indigo-500/10 sm:bg-transparent"
+                : "text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100/50 dark:bg-white/5 sm:bg-transparent"
+                }`}
             >
-              Enterprise Feed
+              <span>Enterprise Feed</span>
+              {workspaceTab === "enterprise" && <span className="sm:hidden text-indigo-500 tracking-[0.2em] text-[8px]">ACTIVE</span>}
             </button>
           </nav>
 
@@ -2767,7 +2774,9 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                       <span className="px-3 py-1.5 bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 rounded-xl text-[8px] font-black uppercase tracking-widest">
                         {m.type}
                       </span>
-                      <span className="text-slate-500 text-[9px] font-black uppercase tracking-widest">LOCAL</span>
+                      <span className={`text-[9px] font-black uppercase tracking-widest ${m.syncStatus === 'offline' ? 'text-amber-500 animate-pulse' : 'text-slate-500'}`}>
+                        {m.syncStatus === 'offline' ? 'OFFLINE' : 'LOCAL'}
+                      </span>
                     </div>
 
                     <h3 className="text-lg md:text-xl font-black line-clamp-2 leading-tight">{m.title}</h3>
@@ -2782,19 +2791,56 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                         <PlayIcon className="mr-3 w-4 h-4 text-indigo-600" />
                         {formatTime(m.duration)}
                       </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          syncToCloud(m.id);
-                        }}
-                        className="p-2 hover:text-indigo-400 flex items-center gap-2"
-                      >
-                        {m.syncStatus === "syncing" ? (
-                          <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <span className="opacity-60 hover:opacity-100 transition-opacity">☁️ Sync</span>
-                        )}
-                      </button>
+                      {m.syncStatus === "offline" ? (
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (!navigator.onLine) {
+                              showToast("Still offline. Please connect to internet to transcribe.", "info");
+                              return;
+                            }
+                            // Start transcription logic
+                            try {
+                              showToast("Transcribing offline meeting...", "info");
+                              const audioBlob = await getAudioBlob(m.audioStorageKey!);
+                              if (!audioBlob) throw new Error("Audio data not found");
+
+                              await startProcessingForAudio({
+                                audioBlob,
+                                mimeType: audioBlob.type,
+                                storageKey: m.audioStorageKey!,
+                                accent: m.accentPreference,
+                                duration: m.duration,
+                                inputSourceLabel: m.inputSource || "Microphone",
+                                fallbackTitle: m.title,
+                              });
+
+                              // Remove the offline placeholder once processing starts successfully
+                              setMeetings(prev => prev.filter(p => p.id !== m.id));
+                            } catch (err) {
+                              console.error(err);
+                              showToast("Failed to transcribe offline meeting.", "info");
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-indigo-500 rounded-xl text-white text-[9px] font-black uppercase tracking-widest hover:bg-indigo-600 shadow-md transition-colors"
+                        >
+                          Push to Transcribe
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            syncToCloud(m.id);
+                          }}
+                          className="p-2 hover:text-indigo-400 flex items-center gap-2"
+                        >
+                          {m.syncStatus === "syncing" ? (
+                            <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <span className="opacity-60 hover:opacity-100 transition-opacity">☁️ Sync</span>
+                          )}
+                        </button>
+                      )}
                     </div>
 
                     <Tooltip text="Open meeting" />
@@ -2900,18 +2946,17 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
               {isRecording
                 ? `Recording • ${formatTime(recordingTime)}`
                 : isProcessing
-                ? `${activeProcessingPhase?.label || "Processing"} • ${processingProgressPercent}%`
-                : "Tap to start"}
+                  ? `${activeProcessingPhase?.label || "Processing"} • ${processingProgressPercent}%`
+                  : "Tap to start"}
             </p>
           </div>
           <div className="flex items-center gap-3 max-[360px]:flex-col max-[360px]:items-stretch">
             <button
               onClick={() => (shareMeetingAudio ? clearDisplayStream() : void handleShareMeetingAudio())}
-              className={`px-5 py-3 rounded-2xl border font-black text-[10px] uppercase tracking-widest transition ${
-                shareMeetingAudio
-                  ? "machine-cta text-white border-sky-300/40"
-                  : "bg-transparent text-slate-100 border-slate-500/70 hover:border-sky-300/60"
-              }`}
+              className={`px-5 py-3 rounded-2xl border font-black text-[10px] uppercase tracking-widest transition ${shareMeetingAudio
+                ? "machine-cta text-white border-sky-300/40"
+                : "bg-transparent text-slate-100 border-slate-500/70 hover:border-sky-300/60"
+                }`}
             >
               {shareMeetingAudio ? "Stop sharing meeting" : "Share meeting audio"}
             </button>
@@ -2947,13 +2992,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                   return (
                     <div
                       key={phase.key}
-                      className={`rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] border ${
-                        state === "done"
-                          ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
-                          : state === "active"
+                      className={`rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] border ${state === "done"
+                        ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
+                        : state === "active"
                           ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-200"
                           : "border-slate-600/30 bg-slate-900/40 text-slate-500"
-                      }`}
+                        }`}
                     >
                       {phase.label}
                     </div>
@@ -3017,11 +3061,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 type="button"
                 onClick={() => (diagnosticsEnabled ? stopDiagnostics() : void startDiagnostics())}
                 disabled={diagnosticsLoading || isRecording || isProcessing}
-                className={`h-10 px-5 rounded-xl text-[10px] font-black uppercase tracking-[0.24em] transition ${
-                  diagnosticsEnabled
-                    ? "bg-rose-600 text-white hover:bg-rose-700"
-                    : "machine-cta text-white"
-                } disabled:opacity-60 disabled:cursor-not-allowed`}
+                className={`h-10 px-5 rounded-xl text-[10px] font-black uppercase tracking-[0.24em] transition ${diagnosticsEnabled
+                  ? "bg-rose-600 text-white hover:bg-rose-700"
+                  : "machine-cta text-white"
+                  } disabled:opacity-60 disabled:cursor-not-allowed`}
               >
                 {diagnosticsLoading ? "Starting..." : diagnosticsEnabled ? "Stop Diagnostics" : "Start Diagnostics"}
               </button>
@@ -3067,10 +3110,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                     {systemConfidenceState === "ok"
                       ? "System OK"
                       : systemConfidenceState === "warming"
-                      ? "System stabilizing"
-                      : systemConfidenceState === "blocked"
-                      ? "No system feed"
-                      : "System idle"}
+                        ? "System stabilizing"
+                        : systemConfidenceState === "blocked"
+                          ? "No system feed"
+                          : "System idle"}
                   </span>
                 </div>
                 <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
@@ -3083,65 +3126,64 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
             {diagnosticsNote && <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">{diagnosticsNote}</p>}
           </div>
-{/* RECORD + UPLOAD (SIDE BY SIDE) */}
-<div className="relative flex flex-wrap items-center justify-center gap-5 max-[360px]:gap-3">
-  {/* MAIN RECORD CONTROL */}
-  <div className="relative group">
-    {isRecording ? (
-      <div className="relative flex items-center justify-center">
-        <NeuralVisualizer analyser={analyserRef.current} />
-        <button
-          onClick={stopRecording}
-          className="absolute inset-0 m-auto w-28 h-28 max-[360px]:w-20 max-[360px]:h-20 bg-red-600 rounded-[2.5rem] max-[360px]:rounded-2xl flex items-center justify-center text-white shadow-[0_0_80px_rgba(220,38,38,0.5)] transform hover:scale-110 transition-transform"
-        >
-          <StopIcon className="w-10 h-10" />
-        </button>
-      </div>
-    ) : (
-      <button
-        onClick={startRecording}
-        disabled={isProcessing}
-        className={`w-56 h-56 max-[360px]:w-44 max-[360px]:h-44 ${
-          isProcessing ? "bg-indigo-900 animate-pulse" : "bg-indigo-600"
-        } rounded-[2.5rem] max-[360px]:rounded-2xl flex items-center justify-center text-white shadow-[0_0_100px_rgba(79,70,229,0.35)] transform hover:scale-105 active:scale-95 transition-all`}
-      >
-        <MicIcon className="w-20 h-20 max-[360px]:w-14 max-[360px]:h-14 group-hover:rotate-12 transition-transform" />
-      </button>
-    )}
+          {/* RECORD + UPLOAD (SIDE BY SIDE) */}
+          <div className="relative flex flex-wrap items-center justify-center gap-5 max-[360px]:gap-3">
+            {/* MAIN RECORD CONTROL */}
+            <div className="relative group">
+              {isRecording ? (
+                <div className="relative flex items-center justify-center">
+                  <NeuralVisualizer analyser={analyserRef.current} />
+                  <button
+                    onClick={stopRecording}
+                    className="absolute inset-0 m-auto w-28 h-28 max-[360px]:w-20 max-[360px]:h-20 bg-red-600 rounded-[2.5rem] max-[360px]:rounded-2xl flex items-center justify-center text-white shadow-[0_0_80px_rgba(220,38,38,0.5)] transform hover:scale-110 transition-transform"
+                  >
+                    <StopIcon className="w-10 h-10" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={startRecording}
+                  disabled={isProcessing}
+                  className={`w-56 h-56 max-[360px]:w-44 max-[360px]:h-44 ${isProcessing ? "bg-indigo-900 animate-pulse" : "bg-indigo-600"
+                    } rounded-[2.5rem] max-[360px]:rounded-2xl flex items-center justify-center text-white shadow-[0_0_100px_rgba(79,70,229,0.35)] transform hover:scale-105 active:scale-95 transition-all`}
+                >
+                  <MicIcon className="w-20 h-20 max-[360px]:w-14 max-[360px]:h-14 group-hover:rotate-12 transition-transform" />
+                </button>
+              )}
 
-    <Tooltip text={isRecording ? "Stop Capture" : "Start Capture"} />
-  </div>
+              <Tooltip text={isRecording ? "Stop Capture" : "Start Capture"} />
+            </div>
 
-	  {/* UPLOAD CONTROL (only when not recording) */}
-	  {!isRecording && (
-	    <div className="relative group">
-	      <label
-	        className={`cursor-pointer select-none flex items-center gap-2 px-4 max-[360px]:px-3 h-14 max-[360px]:h-11 rounded-2xl max-[360px]:rounded-xl
+            {/* UPLOAD CONTROL (only when not recording) */}
+            {!isRecording && (
+              <div className="relative group">
+                <label
+                  className={`cursor-pointer select-none flex items-center gap-2 px-4 max-[360px]:px-3 h-14 max-[360px]:h-11 rounded-2xl max-[360px]:rounded-xl
 	          bg-white/[0.04] border border-white/10 text-white/80 backdrop-blur-md
 	          ${isProcessing ? "opacity-40 pointer-events-none" : "hover:bg-white/[0.07] hover:text-white hover:scale-[1.02]"}
 	          transition`}
-	        title="Upload an audio/video file to transcribe + analyze"
-	      >
-	        <FolderIcon className="w-5 h-5" />
-	        <span className="text-[10px] font-black uppercase tracking-widest">Upload</span>
-	        <input
-	          type="file"
-	          accept="audio/*,video/*"
-	          hidden
-	          onChange={async (e) => {
-	            const file = e.target.files?.[0];
-	            if (!file) return;
-	
-	            // allow selecting the same file again
-	            e.currentTarget.value = "";
-	            await handleUploadAudio(file);
-	          }}
-	        />
-	      </label>
-	      <Tooltip text="Upload Audio" position="bottom" />
-	    </div>
-	  )}
-</div>
+                  title="Upload an audio/video file to transcribe + analyze"
+                >
+                  <FolderIcon className="w-5 h-5" />
+                  <span className="text-[10px] font-black uppercase tracking-widest">Upload</span>
+                  <input
+                    type="file"
+                    accept="audio/*,video/*"
+                    hidden
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+
+                      // allow selecting the same file again
+                      e.currentTarget.value = "";
+                      await handleUploadAudio(file);
+                    }}
+                  />
+                </label>
+                <Tooltip text="Upload Audio" position="bottom" />
+              </div>
+            )}
+          </div>
           <div className="machine-panel w-full max-w-5xl p-6 max-[360px]:p-4 rounded-[2rem] max-[360px]:rounded-2xl grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 max-[360px]:gap-3">
             <div className="space-y-2">
               <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest ml-4">Input</label>
@@ -3262,11 +3304,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
               <div className="flex justify-between items-center">
                 <h3 className="text-xl font-black tracking-tighter">Summary.</h3>
                 <span
-                  className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                    selectedMeeting.syncStatus === "cloud"
-                      ? "bg-indigo-600 text-white"
-                      : "bg-slate-300 dark:bg-slate-500/20 text-slate-700 dark:text-slate-400"
-                  }`}
+                  className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${selectedMeeting.syncStatus === "cloud"
+                    ? "bg-indigo-600 text-white"
+                    : "bg-slate-300 dark:bg-slate-500/20 text-slate-700 dark:text-slate-400"
+                    }`}
                 >
                   {selectedMeeting.syncStatus === "cloud" ? "Synced" : "Offline"}
                 </span>
@@ -3290,8 +3331,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                   {recapLoading
                     ? "AI brief processing..."
                     : recapCoolingDown
-                    ? `AI brief cooldown (${recapCooldownRemaining}s)`
-                    : "Play AI Brief"}
+                      ? `AI brief cooldown (${recapCooldownRemaining}s)`
+                      : "Play AI Brief"}
                 </button>
                 {(recapLoading || recapCoolingDown) && (
                   <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
@@ -3403,9 +3444,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                         <h3 className="font-tech-display text-lg md:text-xl font-black text-white">{provider.name}</h3>
                       </div>
                       <span
-                        className={`font-tech-label text-[8px] font-black uppercase tracking-[0.28em] ${
-                          provider.connected ? "text-emerald-400" : "text-slate-500"
-                        }`}
+                        className={`font-tech-label text-[8px] font-black uppercase tracking-[0.28em] ${provider.connected ? "text-emerald-400" : "text-slate-500"
+                          }`}
                       >
                         {provider.connected ? "Connected" : "Disconnected"}
                       </span>
@@ -3417,11 +3457,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
                   <button
                     onClick={() => startOAuth(provider.id as "google" | "microsoft")}
-                    className={`w-full py-3 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all ${
-                      provider.connected
-                        ? "bg-gradient-to-r from-slate-800 to-slate-950 text-white shadow-lg"
-                        : "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-xl hover:from-indigo-600 hover:to-purple-600"
-                    }`}
+                    className={`w-full py-3 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all ${provider.connected
+                      ? "bg-gradient-to-r from-slate-800 to-slate-950 text-white shadow-lg"
+                      : "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-xl hover:from-indigo-600 hover:to-purple-600"
+                      }`}
                   >
                     {provider.connected ? "Refresh connection" : "Connect"}
                   </button>
@@ -3439,9 +3478,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 <div className="flex justify-between items-center">
                   <div className="text-2xl">{int.icon}</div>
                   <span
-                    className={`font-tech-label px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-[0.2em] ${
-                      int.connected ? "bg-emerald-500 text-white" : "bg-slate-800 text-slate-400"
-                    }`}
+                    className={`font-tech-label px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-[0.2em] ${int.connected ? "bg-emerald-500 text-white" : "bg-slate-800 text-slate-400"
+                      }`}
                   >
                     {int.connected ? "Connected" : "Available"}
                   </span>
@@ -3457,11 +3495,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                     setIntegrations((prev) => prev.map((i) => (i.id === int.id ? { ...i, connected: !i.connected } : i)));
                     showToast(`${int.name} ${!int.connected ? "Linked" : "Unlinked"}`);
                   }}
-                  className={`w-full py-3 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all ${
-                    int.connected
-                      ? "bg-slate-900 text-white shadow-lg border border-white/10"
-                      : "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-xl hover:from-indigo-600 hover:to-purple-600"
-                  }`}
+                  className={`w-full py-3 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all ${int.connected
+                    ? "bg-slate-900 text-white shadow-lg border border-white/10"
+                    : "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-xl hover:from-indigo-600 hover:to-purple-600"
+                    }`}
                 >
                   {int.connected ? "Disconnect" : "Connect Link"}
                 </button>
@@ -3699,17 +3736,15 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
                     <button
                       onClick={() => setAutoListenEnabled((v) => !v)}
-                      className={`w-14 h-8 rounded-full border transition-all relative ${
-                        autoListenEnabled
-                          ? "bg-indigo-600 border-indigo-500"
-                          : "bg-slate-200 dark:bg-white/10 border-slate-300 dark:border-white/10"
-                      }`}
+                      className={`w-14 h-8 rounded-full border transition-all relative ${autoListenEnabled
+                        ? "bg-indigo-600 border-indigo-500"
+                        : "bg-slate-200 dark:bg-white/10 border-slate-300 dark:border-white/10"
+                        }`}
                       aria-pressed={autoListenEnabled}
                     >
                       <span
-                        className={`absolute top-1 left-1 w-6 h-6 rounded-full bg-white shadow transition-transform ${
-                          autoListenEnabled ? "translate-x-6" : "translate-x-0"
-                        }`}
+                        className={`absolute top-1 left-1 w-6 h-6 rounded-full bg-white shadow transition-transform ${autoListenEnabled ? "translate-x-6" : "translate-x-0"
+                          }`}
                       />
                     </button>
                   </div>
@@ -3828,11 +3863,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
               {supportChat.map((m, i) => (
                 <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                   <div
-                    className={`max-w-[85%] p-4 rounded-2xl ${
-                      m.role === "user"
-                        ? "bg-indigo-600 text-white"
-                        : "bg-slate-100 dark:bg-white/5 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/10"
-                    }`}
+                    className={`max-w-[85%] p-4 rounded-2xl ${m.role === "user"
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-100 dark:bg-white/5 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/10"
+                      }`}
                   >
                     <p className="text-xs font-bold leading-relaxed whitespace-pre-wrap">{m.text}</p>
                   </div>

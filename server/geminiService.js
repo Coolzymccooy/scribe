@@ -1,5 +1,6 @@
 ﻿import { GoogleGenAI, Type, Modality } from '@google/genai';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -143,14 +144,54 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
     6. If silence/no speech, return an empty array.
   `;
 
+  // Read the multer disk temp file into a buffer
+  const fileBuffer = await fs.readFile(audioFilePath);
+  const INLINE_LIMIT = 15 * 1024 * 1024; // 15MB
+
+  if (fileBuffer.length <= INLINE_LIMIT) {
+    // Small/medium recordings: use inlineData directly — proven reliable
+    const base64Audio = fileBuffer.toString('base64');
+    const response = await ai.models.generateContent({
+      model: TRANSCRIBE_MODEL,
+      contents: {
+        parts: [
+          { inlineData: { data: base64Audio, mimeType } },
+          { text: prompt },
+        ],
+      },
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              startTime: { type: Type.NUMBER },
+              endTime: { type: Type.NUMBER },
+              speaker: { type: Type.STRING },
+              text: { type: Type.STRING },
+            },
+            required: ['id', 'startTime', 'endTime', 'speaker', 'text'],
+          },
+        },
+      },
+    });
+    return safeJsonParse(response.text || '[]', []);
+  }
+
+  // Large recordings (>15MB): write to named temp and use the Gemini File API
   let uploadResult;
+  const tempFilename = crypto.randomUUID() + (mimeType.includes('mp4') ? '.mp4' : mimeType.includes('wav') ? '.wav' : '.webm');
+  const tempFilePath = path.join(os.tmpdir(), tempFilename);
+  await fs.writeFile(tempFilePath, fileBuffer);
+
   try {
     uploadResult = await ai.files.upload({
-      file: audioFilePath,
-      mimeType: mimeType,
+      file: tempFilePath,
+      config: { mimeType },
     });
 
-    // Wait for the file to be processed
     let fileState = await ai.files.get({ name: uploadResult.name });
     while (fileState.state === 'PROCESSING') {
       await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -182,16 +223,13 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
         },
       },
     });
-
     return safeJsonParse(response.text || '[]', []);
   } finally {
-    // Clean up Gemini file
+    await fs.unlink(tempFilePath).catch(() => { });
     if (uploadResult && uploadResult.name) {
-      try {
-        await ai.files.delete({ name: uploadResult.name });
-      } catch (err) {
-        console.error('Failed to clean up Gemini file:', err);
-      }
+      await ai.files.delete({ name: uploadResult.name }).catch((err) =>
+        console.error('Failed to clean up Gemini file:', err)
+      );
     }
   }
 }

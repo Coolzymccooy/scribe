@@ -2147,6 +2147,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
           // ignore
         }
         audioContextRef.current = null;
+
+        // CRITICAL: Stop all mic tracks to release the OS microphone and remove the browser tab indicator
+        if (micStreamRef.current) {
+          micStreamRef.current.getTracks().forEach((track) => track.stop());
+          micStreamRef.current = null;
+        }
       }
     };
 

@@ -1663,8 +1663,22 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
   const filteredMeetings = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return meetings;
-    return meetings.filter((m) => (m.title || "").toLowerCase().includes(q));
+    const result = !q
+      ? meetings
+      : meetings.filter((m) => {
+        if ((m.title || "").toLowerCase().includes(q)) return true;
+        // also search transcript text
+        if (m.transcript?.some((seg) => seg.text?.toLowerCase().includes(q))) return true;
+        // also search summary bullet points
+        if (m.summary?.executiveSummary?.some((line) => line.toLowerCase().includes(q))) return true;
+        return false;
+      });
+    // Sort: starred first, then by date
+    return [...result].sort((a, b) => {
+      if (a.starred && !b.starred) return -1;
+      if (!a.starred && b.starred) return 1;
+      return 0;
+    });
   }, [meetings, searchQuery]);
 
   const personalMeetings = useMemo(() => filteredMeetings.filter((m) => m.syncStatus !== "cloud"), [filteredMeetings]);
@@ -2780,9 +2794,21 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                       <span className="px-3 py-1.5 bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 rounded-xl text-[8px] font-black uppercase tracking-widest">
                         {m.type}
                       </span>
-                      <span className={`text-[9px] font-black uppercase tracking-widest ${m.syncStatus === 'offline' ? 'text-amber-500 animate-pulse' : 'text-slate-500'}`}>
-                        {m.syncStatus === 'offline' ? 'OFFLINE' : 'LOCAL'}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMeetings(prev => prev.map(p => p.id === m.id ? { ...p, starred: !p.starred } : p));
+                          }}
+                          className={`text-lg leading-none transition-transform hover:scale-125 ${m.starred ? 'text-amber-400' : 'text-slate-400 opacity-40 hover:opacity-100'}`}
+                          title={m.starred ? 'Unpin recording' : 'Pin recording'}
+                        >
+                          {m.starred ? '★' : '☆'}
+                        </button>
+                        <span className={`text-[9px] font-black uppercase tracking-widest ${m.syncStatus === 'offline' ? 'text-amber-500 animate-pulse' : 'text-slate-500'}`}>
+                          {m.syncStatus === 'offline' ? 'OFFLINE' : 'LOCAL'}
+                        </span>
+                      </div>
                     </div>
 
                     <h3 className="text-lg md:text-xl font-black line-clamp-2 leading-tight">{m.title}</h3>
@@ -3162,31 +3188,68 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
             {/* UPLOAD CONTROL (only when not recording) */}
             {!isRecording && (
-              <div className="relative group">
-                <label
-                  className={`cursor-pointer select-none flex items-center gap-2 px-4 max-[360px]:px-3 h-14 max-[360px]:h-11 rounded-2xl max-[360px]:rounded-xl
+              <div className="flex flex-col items-center gap-3">
+                <div className="relative group">
+                  <label
+                    className={`cursor-pointer select-none flex items-center gap-2 px-4 max-[360px]:px-3 h-14 max-[360px]:h-11 rounded-2xl max-[360px]:rounded-xl
 	          bg-white/[0.04] border border-white/10 text-white/80 backdrop-blur-md
 	          ${isProcessing ? "opacity-40 pointer-events-none" : "hover:bg-white/[0.07] hover:text-white hover:scale-[1.02]"}
 	          transition`}
-                  title="Upload an audio/video file to transcribe + analyze"
-                >
-                  <FolderIcon className="w-5 h-5" />
-                  <span className="text-[10px] font-black uppercase tracking-widest">Upload</span>
-                  <input
-                    type="file"
-                    accept="audio/*,video/*"
-                    hidden
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
+                    title="Upload an audio/video file to transcribe + analyze"
+                  >
+                    <FolderIcon className="w-5 h-5" />
+                    <span className="text-[10px] font-black uppercase tracking-widest">Upload</span>
+                    <input
+                      type="file"
+                      accept="audio/*,video/*"
+                      hidden
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        e.currentTarget.value = "";
+                        await handleUploadAudio(file);
+                      }}
+                    />
+                  </label>
+                  <Tooltip text="Upload Audio" position="bottom" />
+                </div>
 
-                      // allow selecting the same file again
-                      e.currentTarget.value = "";
-                      await handleUploadAudio(file);
-                    }}
-                  />
-                </label>
-                <Tooltip text="Upload Audio" position="bottom" />
+                {/* QUICK RECORD STRIP — visible when idle */}
+                {!isProcessing && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      id="quick-record-btn"
+                      type="button"
+                      onClick={startRecording}
+                      disabled={isProcessing}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 text-white text-[9px] font-black uppercase tracking-widest transition-all hover:scale-105 shadow-md"
+                      title="Quick Record — saves locally, no internet needed"
+                    >
+                      <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                      Record
+                    </button>
+                    <span className="text-slate-500 text-[9px] font-black uppercase tracking-widest">or</span>
+                    <label
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 text-white text-[9px] font-black uppercase tracking-widest transition-all hover:scale-105 shadow-md cursor-pointer ${isProcessing ? "opacity-40 pointer-events-none" : ""
+                        }`}
+                      title="Select an audio file and immediately transcribe it"
+                    >
+                      <span>⚡</span>
+                      Transcribe
+                      <input
+                        type="file"
+                        accept="audio/*,video/*"
+                        hidden
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          e.currentTarget.value = "";
+                          await handleUploadAudio(file);
+                        }}
+                      />
+                    </label>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -3272,7 +3335,37 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
             </button>
 
             <div className="p-7 max-[360px]:p-4 md:p-12 rounded-[3rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 backdrop-blur-3xl shadow-3xl space-y-8 max-[360px]:space-y-5">
-              <h2 className="text-3xl max-[360px]:text-2xl md:text-5xl font-black tracking-tighter leading-tight">{selectedMeeting.title}</h2>
+              <div className="flex items-start justify-between gap-4">
+                <h2 className="text-3xl max-[360px]:text-2xl md:text-5xl font-black tracking-tighter leading-tight">{selectedMeeting.title}</h2>
+                <button
+                  onClick={() => {
+                    const content = [
+                      selectedMeeting.title,
+                      `Date: ${formatRecordedAt(selectedMeeting.date)}  |  Duration: ${formatTime(selectedMeeting.duration)}`,
+                      '',
+                      '== SUMMARY ==',
+                      ...(selectedMeeting.summary?.executiveSummary?.map(l => `• ${l}`) || []),
+                      '',
+                      '== ACTION ITEMS ==',
+                      ...(selectedMeeting.summary?.actionItems?.map(l => `• ${l}`) || []),
+                      '',
+                      '== TRANSCRIPT ==',
+                      ...(selectedMeeting.transcript?.map(s => `[${formatTime(s.startTime)}] ${s.speaker}: ${s.text}`) || []),
+                    ].join('\n');
+                    const blob = new Blob([content], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${selectedMeeting.title.replace(/[^a-z0-9]/gi, '_')}.txt`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600/10 border border-indigo-500/30 text-indigo-400 text-[9px] font-black uppercase tracking-widest hover:bg-indigo-600/20 transition-all"
+                  title="Export transcript as text file"
+                >
+                  <span>⬇</span> Export
+                </button>
+              </div>
 
               <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
                 <span className="px-3 py-1.5 rounded-xl bg-indigo-600/10 text-indigo-400 border border-indigo-500/20">
@@ -3282,20 +3375,67 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 <span>{formatTime(selectedMeeting.duration)}</span>
               </div>
 
+              {/* SPEAKER TIME BREAKDOWN */}
+              {(() => {
+                const speakerMap: Record<string, number> = {};
+                (selectedMeeting.transcript || []).forEach(s => {
+                  const dur = (s.endTime || 0) - (s.startTime || 0);
+                  speakerMap[s.speaker] = (speakerMap[s.speaker] || 0) + Math.max(0, dur);
+                });
+                const entries = Object.entries(speakerMap).filter(([, d]) => d > 0);
+                if (entries.length < 2) return null;
+                const total = entries.reduce((s, [, d]) => s + d, 0);
+                const colors = ['bg-indigo-500', 'bg-emerald-500', 'bg-amber-500', 'bg-fuchsia-500', 'bg-cyan-500', 'bg-rose-500'];
+                return (
+                  <div className="space-y-3">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Speaker Breakdown</p>
+                    <div className="flex rounded-xl overflow-hidden h-3">
+                      {entries.map(([speaker, dur], i) => (
+                        <div
+                          key={speaker}
+                          className={`${colors[i % colors.length]} transition-all`}
+                          style={{ width: `${(dur / total * 100).toFixed(1)}%` }}
+                          title={`${speaker}: ${Math.round(dur / total * 100)}%`}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      {entries.map(([speaker, dur], i) => (
+                        <div key={speaker} className="flex items-center gap-1.5">
+                          <span className={`w-2 h-2 rounded-full ${colors[i % colors.length]}`} />
+                          <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">{speaker} {Math.round(dur / total * 100)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div className="space-y-4 max-h-[520px] overflow-y-auto pr-4">
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Transcript <span className="text-indigo-400 normal-case font-semibold">(click any line to edit)</span></p>
                 {selectedMeeting.transcript.length ? (
                   selectedMeeting.transcript.map((s) => (
                     <div
                       key={s.id}
-                      className="p-5 rounded-[1.75rem] bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 hover:bg-indigo-500/5 transition-all"
+                      className="p-5 rounded-[1.75rem] bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 hover:bg-indigo-500/5 transition-all group"
                     >
                       <div className="flex justify-between items-center mb-2">
                         <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">{s.speaker}</span>
                         <span className="text-[9px] font-mono text-slate-500">[{formatTime(s.startTime)}]</span>
                       </div>
-                      <p className="text-sm md:text-base font-medium text-slate-700 dark:text-slate-300 leading-relaxed">
-                        {s.text}
-                      </p>
+                      <textarea
+                        defaultValue={s.text}
+                        rows={Math.max(1, Math.ceil(s.text.length / 80))}
+                        className="w-full bg-transparent text-sm md:text-base font-medium text-slate-700 dark:text-slate-300 leading-relaxed outline-none resize-none border-0 border-b border-transparent focus:border-indigo-400 transition-colors"
+                        onBlur={(e) => {
+                          const newText = e.target.value;
+                          if (newText === s.text) return;
+                          setMeetings(prev => prev.map(m => m.id === selectedMeeting.id
+                            ? { ...m, transcript: m.transcript.map(seg => seg.id === s.id ? { ...seg, text: newText } : seg) }
+                            : m
+                          ));
+                        }}
+                      />
                     </div>
                   ))
                 ) : (

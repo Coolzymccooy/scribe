@@ -131,10 +131,25 @@ const summarizeTranscriptChunk = async (ai, transcriptChunk, type, accent, label
 
 export async function transcribeAudio(audioFilePath, mimeType, accent) {
   const ai = getClient();
-  const prompt = `
-    Listen carefully and transcribe in strict chronological order.
-    Accent priority: ${accent}
 
+  const accentInstructions = {
+    standard: `You are transcribing standard English. Use proper grammar and spelling.`,
+    uk: `You are transcribing British English (UK Dialect). Apply UK spelling conventions (e.g., 'colour', 'realise', 'organisation'). 
+    Recognise British phrases, idioms, and pronunciation patterns. Common UK slang and expressions should be preserved as spoken.
+    Speakers may use words like 'brilliant', 'cheers', 'proper', 'reckon', 'mate', 'bloke', 'sorted'. Transcribe faithfully.`,
+    nigerian: `You are transcribing Nigerian English (Nigerian Patois / Pidgin). 
+    Nigerian English blends formal English with Yoruba, Igbo, Hausa influences and Nigerian Pidgin.
+    Preserve common Nigerian phrases and expressions as spoken: e.g., 'abi', 'o', 'na', 'e don happen', 'how you dey', 'no vex', 'oga', 'aunty', 'bros'.
+    Do NOT over-correct Nigerian Pidgin to standard English. Capture the speaker's actual words faithfully.
+    If a speaker code-switches between formal English and Pidgin, transcribe both accurately.`,
+  };
+
+  const dialectNote = accentInstructions[accent] || accentInstructions.standard;
+
+  const prompt = `
+    ${dialectNote}
+
+    Now transcribe the audio in strict chronological order.
     Instructions:
     1. Identify speakers only when clearly distinct.
     2. Provide timestamps in seconds.

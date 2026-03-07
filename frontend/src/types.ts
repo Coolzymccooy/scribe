@@ -67,6 +67,7 @@ export interface MeetingNote {
 
   inputSource?: string;
   syncStatus?: "local" | "syncing" | "cloud" | "offline";
+  starred?: boolean;
 }
 
 export type ViewState =

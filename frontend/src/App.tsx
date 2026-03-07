@@ -436,9 +436,9 @@ const SidebarItem: React.FC<{
 }> = ({ icon, label, active, onClick, tooltip }) => (
   <button
     onClick={onClick}
-    className={`machine-nav-item group relative w-full flex items-center gap-3 p-2.5 md:p-3 transition-all
+    className={`app-nav-item group relative w-full flex items-center gap-3 p-2.5 md:p-3 transition-all
       ${active
-        ? "machine-nav-item-active"
+        ? "app-nav-item-active"
         : ""
       }`}
   >
@@ -615,7 +615,7 @@ const Layout: React.FC<LayoutProps> = ({
                 className={`p-2.5 rounded-full border transition-all
                   ${theme === "dark"
                     ? "bg-white/5 text-amber-400 border-white/10"
-                    : "machine-cta border-sky-300/40"
+                    : "app-cta border-sky-300/40"
                   }`}
               >
                 {theme === "dark" ? "☀️" : "🌙"}
@@ -626,9 +626,9 @@ const Layout: React.FC<LayoutProps> = ({
             <div className="group relative hidden sm:block">
               <button
                 onClick={() => setView("recorder")}
-                className="machine-cta px-4 md:px-5 py-2.5 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all"
+                className="app-cta px-4 md:px-5 py-2.5 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all"
               >
-                Studio Live
+                Live Studio
               </button>
               <Tooltip text="Begin recording" position="bottom" />
             </div>
@@ -662,7 +662,7 @@ const Layout: React.FC<LayoutProps> = ({
       )}
 
       {toast && (
-        <div className="fixed bottom-4 right-4 px-5 py-2.5 rounded-xl machine-panel text-slate-100 font-tech-label text-[10px] uppercase tracking-[0.2em] shadow-3xl z-50 flex items-center gap-3">
+        <div className="fixed bottom-4 right-4 px-5 py-2.5 rounded-xl app-panel text-slate-100 font-tech-label text-[10px] uppercase tracking-[0.2em] shadow-3xl z-50 flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-white animate-ping"></div>
           <span>{toast.message}</span>
         </div>
@@ -757,7 +757,7 @@ const HELP_ARTICLES: Record<string, { title: string; content: string }> = {
 const MOCK_SEED: MeetingNote[] = [
   {
     id: "seed-0",
-    title: "Neural Workspace Onboarding",
+    title: "Workspace Onboarding",
     date: new Date().toISOString(),
     duration: 320,
     type: MeetingType.STAND_UP,
@@ -877,6 +877,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
   const [processingPhaseKey, setProcessingPhaseKey] = useState<(typeof PROCESSING_PHASES)[number]["key"] | null>(null);
   const [processingProgressOverride, setProcessingProgressOverride] = useState<number | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [completedTranscriptionId, setCompletedTranscriptionId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [accentMode, setAccentMode] = useState<AccentMode>("standard");
@@ -1047,7 +1048,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
   const buildApiUrl = useCallback((path: string) => `${baseApiUrl}${path}`, [baseApiUrl]);
 
   /** -----------------------------
-   * Auto-listen (MVP)
+   * Auto-record (MVP)
    * - Shows a banner shortly before a scheduled event
    * - User still must click "Start listening" (browser mic permission)
    * ------------------------------ */
@@ -1686,7 +1687,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
   const syncToCloud = async (meetingId: string) => {
     setMeetings((prev) => prev.map((m) => (m.id === meetingId ? { ...m, syncStatus: "syncing" } : m)));
-    showToast("Pushing to Neural Cloud...", "info");
+    showToast("Pushing to Cloud Backup...", "info");
     await new Promise((r) => setTimeout(r, 1500));
     setMeetings((prev) => prev.map((m) => (m.id === meetingId ? { ...m, syncStatus: "cloud" } : m)));
     showToast("Successfully Synced to Cloud Backup");
@@ -1777,8 +1778,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       };
 
       setMeetings((prev) => [newMeeting, ...prev]);
-      setSelectedMeetingId(id);
-      setView("details");
+      setCompletedTranscriptionId(id);
     },
     []
   );
@@ -2006,19 +2006,21 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
         }
       }
 
-      // --- START BACKGROUND HACK (FAIL-SAFE) ---
+      // --- SILENT KEEPALIVE: Keep AudioContext alive on mobile/iOS without producing any sound ---
+      // Using a ScriptProcessor with zero output instead of an oscillator avoids the audible hum.
       try {
-        const dummyOsc = ctx.createOscillator();
-        const dummyGain = ctx.createGain();
-        dummyGain.gain.value = 0.001;
-        dummyOsc.connect(dummyGain);
-        dummyGain.connect(ctx.destination);
-        dummyOsc.start();
-        (ctx as any)._dummyOsc = dummyOsc;
+        const silentProcessor = ctx.createScriptProcessor(256, 1, 1);
+        silentProcessor.onaudioprocess = () => { /* intentionally silent */ };
+        const silentGain = ctx.createGain();
+        silentGain.gain.value = 0; // absolute zero output - no sound emitted
+        silentProcessor.connect(silentGain);
+        silentGain.connect(ctx.destination);
+        (ctx as any)._silentProcessor = silentProcessor;
+        (ctx as any)._silentGain = silentGain;
       } catch (err) {
-        console.warn("Background audio hack failed (ignoring)", err);
+        console.warn("Silent keepalive setup failed (non-critical)", err);
       }
-      // --- END BACKGROUND HACK ---
+      // --- END SILENT KEEPALIVE ---
 
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
@@ -2066,7 +2068,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
       mediaRecorder.start(4000);
       void requestWakeLock();
-      showToast("Neural Capture (Auto-Save Active)", "info");
+      showToast("Recording started — saving automatically", "info");
     } catch (err) {
       cleanupRecordingResources();
       const message = err instanceof Error ? err.message : "Microphone access is required for ScribeAI.";
@@ -2419,7 +2421,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       id: "google",
       name: "Google Calendar",
       icon: "📅",
-      description: "Sync Google Meet and Calendar events so Auto-Listen can arm ahead of time.",
+      description: "Sync Google Meet and Calendar events so Auto-Record can arm ahead of time.",
       connected: calendarConnected.google,
     },
     {
@@ -2519,7 +2521,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 >
                   <img src={scribeAiLogo} alt="ScribeAI" className="h-9 sm:h-10 md:h-12 w-auto object-contain" />
                   <span className="font-tech-label text-[10px] sm:text-[11px] uppercase tracking-[0.22em] text-cyan-100/90">
-                    Neural Workspace
+                    Workspace
                   </span>
                 </div>
 
@@ -2578,7 +2580,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                       ? "bg-gradient-to-r from-sky-500 via-indigo-500 to-fuchsia-500 hover:brightness-110"
                       : isMinimal
                         ? "bg-cyan-600 hover:bg-cyan-500"
-                        : "machine-cta hover:brightness-110"
+                        : "app-cta hover:brightness-110"
                       }`}
                   >
                     Open Hub
@@ -2658,6 +2660,29 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
   return (
     <Layout {...layoutProps}>
+      {/* COMPLETION BANNER */}
+      {completedTranscriptionId && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] animate-bounce-in">
+          <div className="animate-completion-glow rounded-full">
+            <button
+              onClick={() => {
+                setSelectedMeetingId(completedTranscriptionId);
+                setCompletedTranscriptionId(null);
+                setView("details");
+              }}
+              className="flex items-center gap-3 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-[0_10px_40px_-10px_rgba(79,70,229,0.8)] border border-indigo-400/30 transition-all font-semibold active:scale-95"
+            >
+              <span className="flex h-3 w-3 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-40"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
+              </span>
+              Transcription Ready. View Now.
+              <span className="opacity-70 text-[10px] ml-1">→</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* AUTO-LISTEN BANNER (MVP) */}
       {autoListenEnabled && autoListenBannerId && nextAutoListenEvent && nextAutoListenEvent.id === autoListenBannerId && (
         <div className="max-w-7xl mx-auto mb-6">
@@ -2667,7 +2692,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 <div className="flex items-center gap-3">
                   <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
                   <span className="text-[10px] font-black uppercase tracking-[0.25em] text-indigo-400">
-                    Auto-listen armed
+                    Auto-record armed
                   </span>
                 </div>
                 <div className="mt-2 font-black text-white text-base sm:text-lg leading-tight">
@@ -2729,7 +2754,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
               <h1 className="text-4xl max-[360px]:text-3xl sm:text-5xl md:text-7xl font-black tracking-tighter uppercase">Workspace.</h1>
               <div className="flex items-center justify-start gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></div>
-                <span>Local Cache Active</span>
+                <span>Local storage active</span>
               </div>
             </div>
 
@@ -2739,7 +2764,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 className="bg-indigo-600 text-white px-8 max-[360px]:px-5 py-4 max-[360px]:py-3 rounded-2xl font-black text-xs max-[360px]:text-[10px] uppercase tracking-widest shadow-xl hover:bg-indigo-700 transition-all flex items-center justify-center gap-3 w-full"
               >
                 <MicIcon className="w-4 h-4" />
-                <span>Capture Insight</span>
+                <span>New Recording</span>
               </button>
               <Tooltip text="Record a new session" />
             </div>
@@ -2753,7 +2778,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 : "text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100/50 dark:bg-white/5 sm:bg-transparent"
                 }`}
             >
-              <span>Personal Cache</span>
+              <span>My Recordings</span>
               {workspaceTab === "personal" && <span className="sm:hidden text-indigo-500 tracking-[0.2em] text-[8px]">ACTIVE</span>}
             </button>
             <button
@@ -2763,7 +2788,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 : "text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100/50 dark:bg-white/5 sm:bg-transparent"
                 }`}
             >
-              <span>Neural Cloud</span>
+              <span>Cloud Backup</span>
               {workspaceTab === "cloud" && <span className="sm:hidden text-indigo-500 tracking-[0.2em] text-[8px]">ACTIVE</span>}
             </button>
             <button
@@ -2773,7 +2798,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 : "text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100/50 dark:bg-white/5 sm:bg-transparent"
                 }`}
             >
-              <span>Enterprise Feed</span>
+              <span>Team Feed</span>
               {workspaceTab === "enterprise" && <span className="sm:hidden text-indigo-500 tracking-[0.2em] text-[8px]">ACTIVE</span>}
             </button>
           </nav>
@@ -2928,7 +2953,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 ))
               ) : (
                 <div className="col-span-full py-16 text-center opacity-50">
-                  <p className="font-black uppercase tracking-[0.3em] text-xs">Neural Cloud is empty.</p>
+                  <p className="font-black uppercase tracking-[0.3em] text-xs">Cloud Backup is empty.</p>
                 </div>
               ))}
 
@@ -2986,7 +3011,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
             <button
               onClick={() => (shareMeetingAudio ? clearDisplayStream() : void handleShareMeetingAudio())}
               className={`px-5 py-3 rounded-2xl border font-black text-[10px] uppercase tracking-widest transition ${shareMeetingAudio
-                ? "machine-cta text-white border-sky-300/40"
+                ? "app-cta text-white border-sky-300/40"
                 : "bg-transparent text-slate-100 border-slate-500/70 hover:border-sky-300/60"
                 }`}
             >
@@ -3002,7 +3027,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
               : "If your phone sleeps, mobile browsers may pause capture. Keep the screen awake during sessions."}
           </p>
           {isProcessing && activeProcessingPhase && (
-            <div className="machine-panel w-full max-w-3xl p-4 md:p-5 rounded-2xl space-y-4">
+            <div className="app-panel w-full max-w-3xl p-4 md:p-5 rounded-2xl space-y-4">
               <div className="flex items-center justify-between gap-4">
                 <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-cyan-300">
                   AI Processing Status
@@ -3039,10 +3064,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
             </div>
           )}
           {sortedRecoverySessions.length > 0 && latestRecoverySessionId && (
-            <div className="machine-panel w-full max-w-3xl p-4 md:p-5 rounded-2xl space-y-3">
+            <div className="app-panel w-full max-w-3xl p-4 md:p-5 rounded-2xl space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="space-y-1">
-                  <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-amber-400">Session Recovery</p>
+                  <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-amber-400">Unsaved Recording Found</p>
                   <p className="text-sm font-semibold text-slate-300">
                     We found {sortedRecoverySessions.length} interrupted capture{sortedRecoverySessions.length > 1 ? "s" : ""}.
                   </p>
@@ -3052,7 +3077,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                     type="button"
                     onClick={() => void recoverSession(latestRecoverySessionId)}
                     disabled={Boolean(restoringSessionId) || isProcessing}
-                    className="machine-cta h-10 px-4 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] disabled:opacity-60 disabled:cursor-not-allowed"
+                    className="app-cta h-10 px-4 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {restoringSessionId === latestRecoverySessionId ? "Restoring..." : "Restore Latest"}
                   </button>
@@ -3081,7 +3106,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
               </p>
             </div>
           )}
-          <div className="machine-panel w-full max-w-3xl p-6 max-[360px]:p-4 rounded-[2rem] max-[360px]:rounded-2xl space-y-5 max-[360px]:space-y-4">
+          <div className="app-panel w-full max-w-3xl p-6 max-[360px]:p-4 rounded-[2rem] max-[360px]:rounded-2xl space-y-5 max-[360px]:space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.32em] text-emerald-500">Recording Diagnostics</p>
@@ -3095,7 +3120,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 disabled={diagnosticsLoading || isRecording || isProcessing}
                 className={`h-10 px-5 rounded-xl text-[10px] font-black uppercase tracking-[0.24em] transition ${diagnosticsEnabled
                   ? "bg-rose-600 text-white hover:bg-rose-700"
-                  : "machine-cta text-white"
+                  : "app-cta text-white"
                   } disabled:opacity-60 disabled:cursor-not-allowed`}
               >
                 {diagnosticsLoading ? "Starting..." : diagnosticsEnabled ? "Stop Diagnostics" : "Start Diagnostics"}
@@ -3103,7 +3128,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="machine-panel p-4 rounded-2xl space-y-3">
+              <div className="app-panel p-4 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">Mic Input</span>
                   <span className="text-xs font-black text-emerald-500">{Math.round(micLevel * 100)}%</span>
@@ -3124,7 +3149,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 </p>
               </div>
 
-              <div className="machine-panel p-4 rounded-2xl space-y-3">
+              <div className="app-panel p-4 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">System Input</span>
                   <span className={`text-xs font-black ${hasSystemDiagnosticsInput ? "text-sky-500" : "text-slate-500"}`}>
@@ -3253,7 +3278,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
               </div>
             )}
           </div>
-          <div className="machine-panel w-full max-w-5xl p-6 max-[360px]:p-4 rounded-[2rem] max-[360px]:rounded-2xl grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 max-[360px]:gap-3">
+          <div className="app-panel w-full max-w-5xl p-6 max-[360px]:p-4 rounded-[2rem] max-[360px]:rounded-2xl grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 max-[360px]:gap-3">
             <div className="space-y-2">
               <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest ml-4">Input</label>
               <select
@@ -3553,7 +3578,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                 className="w-full p-4 text-left text-[11px] font-black uppercase tracking-widest text-indigo-600 hover:text-white hover:bg-indigo-600 dark:hover:bg-indigo-600/20 rounded-2xl transition-all"
                 onClick={() => syncToCloud(selectedMeeting.id)}
               >
-                Quantum Cloud Sync
+                Backup to Cloud
               </button>
             </div>
           </div>
@@ -3574,7 +3599,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
             <div className="flex flex-col gap-1">
               <p className="font-tech-label text-[9px] font-black uppercase tracking-[0.32em] text-indigo-500">Calendar connectors</p>
               <p className="text-sm md:text-[15px] text-slate-300 font-semibold max-w-3xl">
-                Keep Auto-Listen armed by authorizing Google or Microsoft calendars. We only read upcoming meetings.
+                Keep Auto-Record armed by authorizing Google or Microsoft calendars. We only read upcoming meetings.
               </p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
@@ -3742,7 +3767,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="font-tech-label text-[9px] font-black uppercase tracking-[0.3em] text-indigo-500">Backend telemetry</p>
-                <h2 className="font-tech-display text-2xl md:text-3xl font-black text-white">Gemini & Auto-Listen</h2>
+                <h2 className="font-tech-display text-2xl md:text-3xl font-black text-white">Gemini & Auto-Record</h2>
               </div>
               <button
                 onClick={() => fetchAnalytics()}
@@ -3796,7 +3821,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                     </p>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-emerald-500/40 to-lime-500/30 p-4 md:p-5 shadow-2xl space-y-1.5">
-                    <p className="font-tech-label text-[8px] font-black uppercase tracking-[0.24em] text-emerald-100">Auto-listen tweaks</p>
+                    <p className="font-tech-label text-[8px] font-black uppercase tracking-[0.24em] text-emerald-100">Auto-record tweaks</p>
                     <p className="font-tech-display text-3xl md:text-4xl font-black text-white leading-none">{analyticsMetrics?.autoListen.toggles ?? 0}</p>
                     <p className="font-tech-label text-[9px] uppercase tracking-[0.18em] text-white/80">
                       Last saved: {analyticsMetrics?.autoListen.lastUpdated ? new Date(analyticsMetrics.autoListen.lastUpdated).toLocaleString() : "—"}
@@ -3864,7 +3889,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
             <div className="space-y-4">
               <h3 className="text-[10px] font-black uppercase text-indigo-500 tracking-widest border-b border-slate-200 dark:border-white/5 pb-3">
-                Auto-Listen
+                Auto-Record
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">

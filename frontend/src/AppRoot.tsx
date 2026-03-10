@@ -210,6 +210,7 @@ const AppRoot: React.FC = () => {
       accountLabel={currentUser.displayName || currentUser.email || "Google User"}
       onSignOut={handleSignOut}
       isAuthBusy={isBusy}
+      firebaseUid={currentUser.uid}
     />
   );
 };

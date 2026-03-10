@@ -159,12 +159,13 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
     6. If silence/no speech, return an empty array.
   `;
 
-  // Read the multer disk temp file into a buffer
-  const fileBuffer = await fs.readFile(audioFilePath);
+  // Check file size without reading entire file into memory
+  const fileStat = await fs.stat(audioFilePath);
   const INLINE_LIMIT = 15 * 1024 * 1024; // 15MB
 
-  if (fileBuffer.length <= INLINE_LIMIT) {
+  if (fileStat.size <= INLINE_LIMIT) {
     // Small/medium recordings: use inlineData directly — proven reliable
+    const fileBuffer = await fs.readFile(audioFilePath);
     const base64Audio = fileBuffer.toString('base64');
     const response = await ai.models.generateContent({
       model: TRANSCRIBE_MODEL,
@@ -195,11 +196,12 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
     return safeJsonParse(response.text || '[]', []);
   }
 
-  // Large recordings (>15MB): write to named temp and use the Gemini File API
+  // Large recordings (>15MB): upload directly from multer temp path via the Gemini File API
+  // No need to copy — multer already wrote to disk. We rename to add an extension for Gemini.
   let uploadResult;
   const tempFilename = crypto.randomUUID() + (mimeType.includes('mp4') ? '.mp4' : mimeType.includes('wav') ? '.wav' : '.webm');
   const tempFilePath = path.join(os.tmpdir(), tempFilename);
-  await fs.writeFile(tempFilePath, fileBuffer);
+  await fs.copyFile(audioFilePath, tempFilePath);
 
   try {
     uploadResult = await ai.files.upload({
@@ -207,8 +209,13 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
       config: { mimeType },
     });
 
+    const FILE_API_POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes max for Gemini to process upload
+    const fileApiPollStart = Date.now();
     let fileState = await ai.files.get({ name: uploadResult.name });
     while (fileState.state === 'PROCESSING') {
+      if (Date.now() - fileApiPollStart > FILE_API_POLL_TIMEOUT_MS) {
+        throw new Error(`Gemini File API processing timed out after ${FILE_API_POLL_TIMEOUT_MS / 1000}s`);
+      }
       await new Promise((resolve) => setTimeout(resolve, 2000));
       fileState = await ai.files.get({ name: uploadResult.name });
     }

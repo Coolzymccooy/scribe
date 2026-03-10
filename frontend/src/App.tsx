@@ -42,6 +42,14 @@ import {
   listUnfinishedSessions,
   getAudioChunks
 } from "./services/storageService";
+import {
+  saveMeetingToCloud,
+  saveAudioToCloud,
+  fetchMeetingsFromCloud,
+  getAudioFromCloud,
+  mergeMeetings,
+  batchSaveMeetingsToCloud,
+} from "./services/cloudSyncService";
 import scribeAiLogo from "./assets/scribeai-logo.png";
 
 /** -----------------------------
@@ -831,9 +839,10 @@ type AppProps = {
   accountLabel?: string;
   onSignOut?: () => void;
   isAuthBusy?: boolean;
+  firebaseUid?: string;
 };
 
-const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }) => {
+const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, firebaseUid }) => {
   const [view, setView] = useState<ViewState>("landing");
 
   const [theme, setTheme] = useState<Theme>(() => {
@@ -869,6 +878,49 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
     localStorage.setItem("scribe_v3_meetings", JSON.stringify(meetings));
   }, [meetings]);
 
+  // --- CLOUD HYDRATION: Load meetings from Firestore on login, merge with local ---
+  const cloudHydratedRef = useRef(false);
+  useEffect(() => {
+    if (!firebaseUid || cloudHydratedRef.current) return;
+    cloudHydratedRef.current = true;
+
+    void (async () => {
+      try {
+        const cloudMeetingsList = await fetchMeetingsFromCloud(firebaseUid);
+        if (cloudMeetingsList.length === 0) return;
+
+        setMeetings((local) => {
+          const merged = mergeMeetings(local, cloudMeetingsList);
+          return merged;
+        });
+        console.log(`Cloud hydration: merged ${cloudMeetingsList.length} meetings from Firestore`);
+      } catch (err) {
+        console.warn("Cloud hydration failed (non-blocking):", err);
+      }
+    })();
+  }, [firebaseUid]);
+
+  // --- CLOUD AUTO-SYNC: Push meeting metadata to Firestore when meetings change ---
+  const cloudSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!firebaseUid) return;
+    // Debounce cloud writes to avoid hammering Firestore on rapid state changes
+    if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
+    cloudSyncTimerRef.current = setTimeout(() => {
+      const syncable = meetings.filter(
+        (m) => m.transcript.length > 0 && m.syncStatus !== "failed" && m.syncStatus !== "offline"
+      );
+      if (syncable.length === 0) return;
+      void batchSaveMeetingsToCloud(firebaseUid, syncable).catch((err) =>
+        console.warn("Background cloud sync failed:", err)
+      );
+    }, 5000);
+
+    return () => {
+      if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
+    };
+  }, [meetings, firebaseUid]);
+
   const [workspaceTab, setWorkspaceTab] = useState<"personal" | "enterprise" | "cloud">("personal");
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
 
@@ -893,6 +945,23 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
     setToast({ message, type });
     window.setTimeout(() => setToast(null), 3000);
   }, []);
+
+  /** Try local IndexedDB first, fall back to Firebase Storage for cross-device access. */
+  const getAudioBlobWithCloudFallback = useCallback(
+    async (storageKey: string): Promise<Blob | null> => {
+      const local = await getAudioBlob(storageKey).catch(() => null);
+      if (local) return local;
+
+      if (!firebaseUid) return null;
+      const cloudBlob = await getAudioFromCloud(firebaseUid, storageKey).catch(() => null);
+      if (cloudBlob) {
+        // Cache locally for future access
+        await saveAudioBlob(storageKey, cloudBlob).catch(() => {});
+      }
+      return cloudBlob;
+    },
+    [firebaseUid]
+  );
 
   // Crash Recovery State
   const [unfinishedSessions, setUnfinishedSessions] = useState<string[]>([]);
@@ -1686,11 +1755,36 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
   const cloudMeetings = useMemo(() => filteredMeetings.filter((m) => m.syncStatus === "cloud"), [filteredMeetings]);
 
   const syncToCloud = async (meetingId: string) => {
+    if (!firebaseUid) {
+      showToast("Sign in to enable cloud backup", "info");
+      return;
+    }
+    const meeting = meetings.find((m) => m.id === meetingId);
+    if (!meeting) return;
+
     setMeetings((prev) => prev.map((m) => (m.id === meetingId ? { ...m, syncStatus: "syncing" } : m)));
     showToast("Pushing to Cloud Backup...", "info");
-    await new Promise((r) => setTimeout(r, 1500));
-    setMeetings((prev) => prev.map((m) => (m.id === meetingId ? { ...m, syncStatus: "cloud" } : m)));
-    showToast("Successfully Synced to Cloud Backup");
+
+    try {
+      // 1. Upload audio blob to Firebase Storage (if available)
+      if (meeting.audioStorageKey) {
+        const audioBlob = await getAudioBlob(meeting.audioStorageKey);
+        if (audioBlob) {
+          await saveAudioToCloud(firebaseUid, meeting.audioStorageKey, audioBlob);
+        }
+      }
+
+      // 2. Save meeting metadata to Firestore
+      const cloudMeeting = { ...meeting, syncStatus: "cloud" as const };
+      await saveMeetingToCloud(firebaseUid, cloudMeeting);
+
+      setMeetings((prev) => prev.map((m) => (m.id === meetingId ? { ...m, syncStatus: "cloud" } : m)));
+      showToast("Successfully Synced to Cloud Backup");
+    } catch (err) {
+      console.error("Cloud sync failed:", err);
+      setMeetings((prev) => prev.map((m) => (m.id === meetingId ? { ...m, syncStatus: "local" } : m)));
+      showToast("Cloud backup failed. Check connection and try again.", "info");
+    }
   };
 
   const downloadAudio = async (meeting: MeetingNote) => {
@@ -1699,7 +1793,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       return;
     }
     try {
-      const blob = await getAudioBlob(meeting.audioStorageKey);
+      const blob = await getAudioBlobWithCloudFallback(meeting.audioStorageKey);
       if (!blob) throw new Error("Blob missing");
 
       const url = URL.createObjectURL(blob);
@@ -1779,8 +1873,26 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
 
       setMeetings((prev) => [newMeeting, ...prev]);
       setCompletedTranscriptionId(id);
+
+      // Background: upload audio to Firebase Storage so it survives browser data clearing
+      if (firebaseUid && storageKey) {
+        void (async () => {
+          try {
+            const audioBlob = await getAudioBlob(storageKey);
+            if (audioBlob) {
+              await saveAudioToCloud(firebaseUid, storageKey, audioBlob);
+            }
+            await saveMeetingToCloud(firebaseUid, { ...newMeeting, syncStatus: "cloud" });
+            setMeetings((prev) =>
+              prev.map((m) => (m.id === id ? { ...m, syncStatus: "cloud" } : m))
+            );
+          } catch (err) {
+            console.warn("Background cloud upload failed (non-blocking):", err);
+          }
+        })();
+      }
     },
-    []
+    [firebaseUid]
   );
 
   const waitForProcessingJobCompletion = useCallback(
@@ -1826,6 +1938,28 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
     [setProcessingPhase]
   );
 
+  const createFailedMeetingPlaceholder = useCallback(
+    (pending: PendingProcessingJob, errorMessage: string) => {
+      const id = `m_failed_${Date.now()}`;
+      const failedMeeting: MeetingNote = {
+        id,
+        title: pending.preferredTitle?.trim() || pending.fallbackTitle || "Failed Transcription",
+        date: new Date().toISOString(),
+        duration: Math.max(0, Math.round(pending.duration)),
+        type: MeetingType.OTHER,
+        transcript: [],
+        tags: ["transcription-failed"],
+        accentPreference: pending.accent,
+        audioStorageKey: pending.storageKey,
+        inputSource: pending.inputSource,
+        syncStatus: "failed",
+      };
+      setMeetings((prev) => [failedMeeting, ...prev]);
+      console.warn(`Created failed meeting placeholder ${id}: ${errorMessage}`);
+    },
+    []
+  );
+
   const runPendingProcessingJob = useCallback(
     async (pending: PendingProcessingJob) => {
       let effectivePending = pending;
@@ -1836,22 +1970,30 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
           return await waitForProcessingJobCompletion(effectivePending.jobId);
         } catch (err) {
           const errorMessage = String((err as Error)?.message || err || "");
+
+          // Try to restart from cached audio on ANY failure — not just 404
+          const cachedAudio = await getAudioBlobWithCloudFallback(effectivePending.storageKey).catch(() => null);
+          if (!cachedAudio) {
+            throw new Error(`Processing failed and saved audio was not found for retry. Original error: ${errorMessage}`);
+          }
+
           const missingRemoteJob =
             errorMessage.includes("(404)") || errorMessage.toLowerCase().includes("not found");
-          if (!missingRemoteJob) {
-            throw err;
-          }
+          showToast(
+            missingRemoteJob
+              ? "Server job expired. Restarting from saved audio..."
+              : "Transcription failed. Retrying from saved audio...",
+            "info"
+          );
 
-          const cachedAudio = await getAudioBlob(effectivePending.storageKey);
-          if (!cachedAudio) {
-            throw new Error("Saved audio was not found for resume.");
+          try {
+            const restarted = await startProcessingJob(cachedAudio, effectivePending.mimeType, effectivePending.accent);
+            effectivePending = { ...effectivePending, jobId: restarted.jobId };
+            localStorage.setItem(ACTIVE_PROCESSING_JOB_KEY, JSON.stringify(effectivePending));
+            return await waitForProcessingJobCompletion(effectivePending.jobId);
+          } catch (retryErr) {
+            throw new Error(`Retry also failed: ${String((retryErr as Error)?.message || retryErr)}`);
           }
-
-          showToast("Server job expired. Restarting from saved audio...", "info");
-          const restarted = await startProcessingJob(cachedAudio, effectivePending.mimeType, effectivePending.accent);
-          effectivePending = { ...effectivePending, jobId: restarted.jobId };
-          localStorage.setItem(ACTIVE_PROCESSING_JOB_KEY, JSON.stringify(effectivePending));
-          return waitForProcessingJobCompletion(effectivePending.jobId);
         }
       };
 
@@ -1934,14 +2076,18 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       .catch((err) => {
         console.error("PROCESSING RESUME ERROR:", err);
         const message = String((err as Error)?.message || err || "Resume failed");
-        showToast(`Resume failed: ${message}`, "info");
+
+        // CRITICAL: Create a failed meeting placeholder so the recording is NEVER lost.
+        // The audio blob is still in IndexedDB — the user can retry transcription later.
+        createFailedMeetingPlaceholder(pending, message);
+        showToast("Transcription failed — recording saved. Tap to retry.", "info");
         localStorage.removeItem(ACTIVE_PROCESSING_JOB_KEY);
       })
       .finally(() => {
         setIsProcessing(false);
         setProcessingPhase(null);
       });
-  }, [isRecording, isProcessing, runPendingProcessingJob, setProcessingPhase, showToast]);
+  }, [isRecording, isProcessing, runPendingProcessingJob, createFailedMeetingPlaceholder, setProcessingPhase, showToast]);
 
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
@@ -2086,10 +2232,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
     void releaseWakeLock();
 
     recorder.onstop = async () => {
+      const startedAt = recordingStartedAtRef.current;
+      const computedDuration = startedAt ? Math.max(1, Math.round((Date.now() - startedAt) / 1000)) : recordingTime;
+      let storageKey = "";
+
       try {
         setProcessingPhase("finalize");
-        const startedAt = recordingStartedAtRef.current;
-        const computedDuration = startedAt ? Math.max(1, Math.round((Date.now() - startedAt) / 1000)) : recordingTime;
         setRecordingTime(computedDuration);
 
         if (!audioChunksRef.current.length) {
@@ -2100,7 +2248,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
         const recordedMimeType = recordingMimeTypeRef.current || "audio/webm";
         const transcriptionMimeType = normalizeMimeTypeForTranscription(recordedMimeType);
         const audioBlob = new Blob(audioChunksRef.current, { type: transcriptionMimeType });
-        const storageKey = `audio_${Date.now()}`;
+        storageKey = `audio_${Date.now()}`;
         await saveAudioBlob(storageKey, audioBlob);
 
         // AUTO-SAVE CLEANUP: If successful, clear temp chunks
@@ -2146,7 +2294,27 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
       } catch (err) {
         console.error(err);
         const message = String((err as Error)?.message || err || "AI synthesis interrupted");
-        showToast(`AI synthesis interrupted: ${message}`, "info");
+
+        // CRITICAL: If we have a storageKey, create a failed placeholder so the recording is never lost
+        if (storageKey) {
+          const failedMeeting: MeetingNote = {
+            id: `m_failed_${Date.now()}`,
+            title: "Failed Transcription (Tap to Retry)",
+            date: new Date(startedAt || Date.now()).toISOString(),
+            duration: computedDuration,
+            type: MeetingType.OTHER,
+            transcript: [],
+            tags: ["transcription-failed"],
+            accentPreference: accentMode,
+            audioStorageKey: storageKey,
+            inputSource: inputSource,
+            syncStatus: "failed",
+          };
+          setMeetings((prev) => [failedMeeting, ...prev]);
+          showToast("Transcription failed — recording saved. Tap to retry.", "info");
+        } else {
+          showToast(`AI synthesis interrupted: ${message}`, "info");
+        }
       } finally {
         setIsProcessing(false);
         setProcessingPhase(null);
@@ -2830,8 +2998,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                         >
                           {m.starred ? '★' : '☆'}
                         </button>
-                        <span className={`text-[9px] font-black uppercase tracking-widest ${m.syncStatus === 'offline' ? 'text-amber-500 animate-pulse' : 'text-slate-500'}`}>
-                          {m.syncStatus === 'offline' ? 'OFFLINE' : 'LOCAL'}
+                        <span className={`text-[9px] font-black uppercase tracking-widest ${m.syncStatus === 'failed' ? 'text-red-500 animate-pulse' : m.syncStatus === 'offline' ? 'text-amber-500 animate-pulse' : 'text-slate-500'}`}>
+                          {m.syncStatus === 'failed' ? 'FAILED' : m.syncStatus === 'offline' ? 'OFFLINE' : 'LOCAL'}
                         </span>
                       </div>
                     </div>
@@ -2848,7 +3016,40 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                         <PlayIcon className="mr-3 w-4 h-4 text-indigo-600" />
                         {formatTime(m.duration)}
                       </div>
-                      {m.syncStatus === "offline" ? (
+                      {m.syncStatus === "failed" ? (
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (!navigator.onLine) {
+                              showToast("No internet connection. Please try again when online.", "info");
+                              return;
+                            }
+                            try {
+                              showToast("Retrying transcription...", "info");
+                              const audioBlob = await getAudioBlobWithCloudFallback(m.audioStorageKey!);
+                              if (!audioBlob) throw new Error("Audio data not found in local or cloud storage");
+
+                              const mimeType = audioBlob.type || "audio/webm";
+                              setMeetings(prev => prev.filter(p => p.id !== m.id));
+                              await startProcessingForAudio({
+                                audioBlob,
+                                mimeType,
+                                storageKey: m.audioStorageKey!,
+                                accent: m.accentPreference,
+                                duration: m.duration,
+                                inputSourceLabel: m.inputSource || "Microphone",
+                                fallbackTitle: m.title,
+                              });
+                            } catch (err) {
+                              console.error(err);
+                              showToast("Retry failed. Recording is still saved — try again later.", "info");
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-red-500 rounded-xl text-white text-[9px] font-black uppercase tracking-widest hover:bg-red-600 shadow-md transition-colors"
+                        >
+                          Retry Transcription
+                        </button>
+                      ) : m.syncStatus === "offline" ? (
                         <button
                           onClick={async (e) => {
                             e.stopPropagation();
@@ -2856,10 +3057,9 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                               showToast("Still offline. Please connect to internet to transcribe.", "info");
                               return;
                             }
-                            // Start transcription logic
                             try {
                               showToast("Transcribing offline meeting...", "info");
-                              const audioBlob = await getAudioBlob(m.audioStorageKey!);
+                              const audioBlob = await getAudioBlobWithCloudFallback(m.audioStorageKey!);
                               if (!audioBlob) throw new Error("Audio data not found");
 
                               await startProcessingForAudio({
@@ -2872,7 +3072,6 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                                 fallbackTitle: m.title,
                               });
 
-                              // Remove the offline placeholder once processing starts successfully
                               setMeetings(prev => prev.filter(p => p.id !== m.id));
                             } catch (err) {
                               console.error(err);
@@ -3449,6 +3648,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false }
                         <span className="text-[9px] font-mono text-slate-500">[{formatTime(s.startTime)}]</span>
                       </div>
                       <textarea
+                        key={`${s.id}_${s.text.length}`}
                         defaultValue={s.text}
                         rows={Math.max(1, Math.ceil(s.text.length / 80))}
                         className="w-full bg-transparent text-sm md:text-base font-medium text-slate-700 dark:text-slate-300 leading-relaxed outline-none resize-none border-0 border-b border-transparent focus:border-indigo-400 transition-colors"

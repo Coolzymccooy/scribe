@@ -1,4 +1,4 @@
-﻿import express from 'express';
+import express from 'express';
 import cors from 'cors';
 import fs from 'fs/promises';
 import path from 'path';
@@ -107,7 +107,7 @@ const analyticsStore = createAnalyticsStore();
 
 const PROCESSING_JOB_TTL_MS = Number(process.env.PROCESSING_JOB_TTL_MS || 24 * 60 * 60 * 1000);
 const PROCESSING_QUEUE_PARALLELISM = Math.max(1, Number(process.env.PROCESSING_QUEUE_PARALLELISM || 1));
-const PROCESSING_TRANSCRIBE_TIMEOUT_MS = Number(process.env.PROCESSING_TRANSCRIBE_TIMEOUT_MS || 12 * 60 * 1000);
+const PROCESSING_TRANSCRIBE_TIMEOUT_MS = Number(process.env.PROCESSING_TRANSCRIBE_TIMEOUT_MS || 25 * 60 * 1000);
 const PROCESSING_SUMMARY_TIMEOUT_MS = Number(process.env.PROCESSING_SUMMARY_TIMEOUT_MS || 4 * 60 * 1000);
 const MAX_UPLOAD_BYTES = Number(process.env.MAX_AUDIO_UPLOAD_BYTES || 300 * 1024 * 1024);
 
@@ -987,6 +987,132 @@ app.post('/api/support', async (req, res) => {
       gotBodyKeys: Object.keys(req.body || {}),
       gotQuestionType: typeof req.body?.question
     });
+  }
+});
+
+// ── TEAM WORKSPACE ───────────────────────────────────────────────────────
+// Lightweight server-side registry to support find-by-invite-code.
+const orgRegistry = new Map(); // inviteCode -> { orgId, name }
+
+app.post('/api/team/register-org', express.json(), (req, res) => {
+  const { inviteCode, orgId, name } = req.body || {};
+  if (!inviteCode || !orgId || !name) return res.status(400).json({ error: 'inviteCode, orgId, name required' });
+  orgRegistry.set(inviteCode.toUpperCase(), { orgId, name });
+  res.json({ ok: true });
+});
+
+app.get('/api/team/find-org', (req, res) => {
+  const code = String(req.query.code || '').toUpperCase();
+  if (!code) return res.status(400).json({ error: 'code required' });
+  const entry = orgRegistry.get(code);
+  if (!entry) return res.status(404).json({ error: 'No org found for this invite code' });
+  res.json(entry);
+});
+
+// ── SLACK INTEGRATION ─────────────────────────────────────────────────
+app.post('/api/integrations/slack/push', express.json(), async (req, res) => {
+  const { webhookUrl, meeting } = req.body || {};
+  if (!webhookUrl || !meeting) {
+    return res.status(400).json({ error: 'webhookUrl and meeting are required' });
+  }
+  try {
+    const summary = meeting.summary || {};
+    const bullets = (summary.executiveSummary || []).slice(0, 5).map(b => `• ${b}`).join('\n') || '—';
+    const actions = (summary.actionItems || []).slice(0, 5).map(a => `☑ ${a}`).join('\n') || '—';
+    const duration = meeting.duration ? `${Math.round(meeting.duration / 60)}m` : '—';
+
+    const payload = {
+      blocks: [
+        { type: 'header', text: { type: 'plain_text', text: `📋 ${meeting.title || 'Meeting Notes'}`, emoji: true } },
+        { type: 'section', fields: [
+          { type: 'mrkdwn', text: `*Date:*\n${meeting.date ? new Date(meeting.date).toLocaleString() : '—'}` },
+          { type: 'mrkdwn', text: `*Duration:*\n${duration}` },
+        ]},
+        { type: 'section', text: { type: 'mrkdwn', text: `*Summary:*\n${bullets}` } },
+        { type: 'section', text: { type: 'mrkdwn', text: `*Action Items:*\n${actions}` } },
+        { type: 'divider' },
+        { type: 'context', elements: [{ type: 'mrkdwn', text: 'Sent by ScribeAI 🎙️' }] },
+      ]
+    };
+
+    const fetch = (await import('node-fetch')).default;
+    const slackRes = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!slackRes.ok) {
+      const errText = await slackRes.text();
+      return res.status(502).json({ error: 'Slack rejected the payload', details: errText });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Slack push failed', details: err?.message || String(err) });
+  }
+});
+
+// ── NOTION INTEGRATION ────────────────────────────────────────────────
+app.post('/api/integrations/notion/push', express.json(), async (req, res) => {
+  const { notionToken, databaseId, meeting } = req.body || {};
+  if (!notionToken || !databaseId || !meeting) {
+    return res.status(400).json({ error: 'notionToken, databaseId, and meeting are required' });
+  }
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const summary = meeting.summary || {};
+
+    // Build rich-text content blocks for the page body
+    const summaryBlocks = (summary.executiveSummary || []).map(line => ({
+      object: 'block', type: 'bulleted_list_item',
+      bulleted_list_item: { rich_text: [{ type: 'text', text: { content: line } }] }
+    }));
+    const actionBlocks = (summary.actionItems || []).map(line => ({
+      object: 'block', type: 'to_do',
+      to_do: { rich_text: [{ type: 'text', text: { content: line } }], checked: false }
+    }));
+    const transcriptBlocks = (meeting.transcript || []).slice(0, 80).map(seg => ({
+      object: 'block', type: 'paragraph',
+      paragraph: {
+        rich_text: [
+          { type: 'text', text: { content: `[${seg.speaker}] ` }, annotations: { bold: true } },
+          { type: 'text', text: { content: seg.text } }
+        ]
+      }
+    }));
+
+    const pageBody = {
+      parent: { database_id: databaseId },
+      properties: {
+        title: { title: [{ type: 'text', text: { content: meeting.title || 'Meeting Notes' } }] },
+      },
+      children: [
+        { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: '📋 Summary' } }] } },
+        ...summaryBlocks,
+        { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: '☑ Action Items' } }] } },
+        ...actionBlocks,
+        { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: '🎙 Transcript' } }] } },
+        ...transcriptBlocks,
+      ]
+    };
+
+    const notionRes = await fetch('https://api.notion.com/v1/pages', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${notionToken}`,
+        'Notion-Version': '2022-06-28',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(pageBody),
+    });
+
+    const notionData = await notionRes.json();
+    if (!notionRes.ok) {
+      return res.status(502).json({ error: 'Notion API error', details: notionData });
+    }
+    res.json({ ok: true, pageUrl: notionData.url });
+  } catch (err) {
+    res.status(500).json({ error: 'Notion push failed', details: err?.message || String(err) });
   }
 });
 

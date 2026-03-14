@@ -63,7 +63,7 @@ export interface MeetingNote {
   tags: string[];
 
   audioStorageKey?: string;
-  accentPreference: "standard" | "uk" | "nigerian";
+  accentPreference: "standard" | "uk" | "nigerian" | "ghanaian" | "southafrican" | "kenyan";
 
   inputSource?: string;
   syncStatus?: "local" | "syncing" | "cloud" | "offline" | "failed";
@@ -78,7 +78,32 @@ export type ViewState =
   | "settings"
   | "integrations"
   | "analytics"
-  | "help";
+  | "help"
+  | "team";
+
+// ── Team Workspace Types ────────────────────────────────────────────────────
+
+export interface OrgMember {
+  uid: string;
+  email: string;
+  displayName?: string;
+  role: "owner" | "admin" | "viewer";
+  joinedAt: string; // ISO
+}
+
+export interface ScribeOrg {
+  id: string;
+  name: string;
+  ownerId: string;
+  members: OrgMember[];
+  createdAt: string; // ISO
+  inviteCode: string;
+}
+
+export interface TeamMeeting extends MeetingNote {
+  orgId: string;
+  sharedBy: string; // uid
+}
 
 export interface AnalyticsEndpointStats {
   count: number;

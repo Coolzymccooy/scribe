@@ -33,6 +33,18 @@ import {
   askSupport,
 } from "./services/apiService";
 
+import { pushToSlack, pushToNotion } from "./services/integrationService";
+import {
+  createOrg,
+  getOrg,
+  joinOrg,
+  shareToOrg,
+  fetchOrgMeetings,
+  removeFromOrg,
+  updateOrgName,
+  refreshInviteCode,
+} from "./services/teamService";
+
 
 import {
   saveAudioBlob,
@@ -334,7 +346,7 @@ const PROCESSING_PHASES = [
   { key: "publish", label: "Publishing result", detail: "Saving your meeting note and opening details." },
 ] as const;
 
-type AccentMode = "standard" | "uk" | "nigerian";
+type AccentMode = "standard" | "uk" | "nigerian" | "ghanaian" | "southafrican" | "kenyan";
 
 type PendingProcessingJob = {
   jobId: string;
@@ -361,7 +373,7 @@ const parsePendingProcessingJob = (raw: string | null): PendingProcessingJob | n
       jobId: String(parsed.jobId),
       storageKey: String(parsed.storageKey),
       mimeType: String(parsed.mimeType),
-      accent: (["standard", "uk", "nigerian"].includes(parsed.accent) ? parsed.accent : "standard") as AccentMode,
+      accent: (["standard", "uk", "nigerian", "ghanaian", "southafrican", "kenyan"].includes(parsed.accent) ? parsed.accent : "standard") as AccentMode,
       duration: Math.max(0, Number(parsed.duration || 0)),
       inputSource: String(parsed.inputSource || "Uploaded File"),
       fallbackTitle: String(parsed.fallbackTitle || "Recovered Session"),
@@ -557,6 +569,16 @@ const Layout: React.FC<LayoutProps> = ({
               setIsMobileMenuOpen(false);
             }}
             tooltip="Insights"
+          />
+          <SidebarItem
+            icon={<div className="w-4.5 h-4.5 flex items-center justify-center font-bold text-xs">👥</div>}
+            label="Team"
+            active={view === "team"}
+            onClick={() => {
+              setView("team");
+              setIsMobileMenuOpen(false);
+            }}
+            tooltip="Team workspace"
           />
           <SidebarItem
             icon={<div className="w-4.5 h-4.5 flex items-center justify-center font-bold text-xs">💡</div>}
@@ -835,6 +857,80 @@ const MOCK_ENTERPRISE_FEED = [
   },
 ];
 
+// ── Integration push panel (Slack + Notion) ─────────────────────────
+const IntegrationPanel: React.FC<{ meeting: any }> = ({ meeting }) => {
+  const [slackOpen, setSlackOpen] = React.useState(false);
+  const [notionOpen, setNotionOpen] = React.useState(false);
+  const [slackWebhook, setSlackWebhook] = React.useState(() => localStorage.getItem("scribe_slack_webhook") || "");
+  const [notionToken, setNotionToken] = React.useState(() => localStorage.getItem("scribe_notion_token") || "");
+  const [notionDb, setNotionDb] = React.useState(() => localStorage.getItem("scribe_notion_db") || "");
+  const [pushStatus, setPushStatus] = React.useState<string | null>(null);
+
+  const handleSlackPush = async () => {
+    if (!slackWebhook) { setPushStatus("Enter a Slack webhook URL first"); return; }
+    localStorage.setItem("scribe_slack_webhook", slackWebhook);
+    setPushStatus("Pushing to Slack…");
+    const res = await pushToSlack(meeting, slackWebhook);
+    setPushStatus(res.ok ? "✓ Sent to Slack!" : `✕ ${res.error}`);
+    setTimeout(() => setPushStatus(null), 4000);
+  };
+
+  const handleNotionPush = async () => {
+    if (!notionToken || !notionDb) { setPushStatus("Enter Notion token + database ID"); return; }
+    localStorage.setItem("scribe_notion_token", notionToken);
+    localStorage.setItem("scribe_notion_db", notionDb);
+    setPushStatus("Pushing to Notion…");
+    const res = await pushToNotion(meeting, notionToken, notionDb);
+    setPushStatus(res.ok ? "✓ Page created!" : `✕ ${res.error}`);
+    setTimeout(() => setPushStatus(null), 4000);
+  };
+
+  return (
+    <div className="rounded-[2.5rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 overflow-hidden shadow-lg">
+      <p className="px-6 pt-5 pb-2 text-[9px] font-black uppercase tracking-widest text-slate-500">Push to…</p>
+      {pushStatus && <p className="px-6 pb-2 text-[10px] font-semibold text-indigo-400">{pushStatus}</p>}
+
+      {/* Slack */}
+      <button className="w-full px-6 py-3 text-left text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-white hover:bg-indigo-50 dark:hover:bg-white/5 flex items-center justify-between transition-all"
+        onClick={() => setSlackOpen(o => !o)}>
+        <span>🔔 Slack</span><span className="text-slate-400">{slackOpen ? "▲" : "▼"}</span>
+      </button>
+      {slackOpen && (
+        <div className="px-6 pb-4 space-y-2">
+          <input type="url" placeholder="https://hooks.slack.com/…" value={slackWebhook}
+            onChange={e => setSlackWebhook(e.target.value)}
+            className="w-full text-[10px] bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl px-3 py-2 outline-none text-slate-700 dark:text-slate-200 placeholder-slate-400" />
+          <button onClick={handleSlackPush}
+            className="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest transition-all">
+            Send Notes
+          </button>
+        </div>
+      )}
+
+      {/* Notion */}
+      <button className="w-full px-6 py-3 text-left text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-white hover:bg-indigo-50 dark:hover:bg-white/5 flex items-center justify-between transition-all"
+        onClick={() => setNotionOpen(o => !o)}>
+        <span>📝 Notion</span><span className="text-slate-400">{notionOpen ? "▲" : "▼"}</span>
+      </button>
+      {notionOpen && (
+        <div className="px-6 pb-4 space-y-2">
+          <input type="text" placeholder="Notion integration token" value={notionToken}
+            onChange={e => setNotionToken(e.target.value)}
+            className="w-full text-[10px] bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl px-3 py-2 outline-none text-slate-700 dark:text-slate-200 placeholder-slate-400" />
+          <input type="text" placeholder="Database ID (from Notion URL)" value={notionDb}
+            onChange={e => setNotionDb(e.target.value)}
+            className="w-full text-[10px] bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl px-3 py-2 outline-none text-slate-700 dark:text-slate-200 placeholder-slate-400" />
+          <button onClick={handleNotionPush}
+            className="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest transition-all">
+            Create Page
+          </button>
+        </div>
+      )}
+      <div className="h-2" />
+    </div>
+  );
+};
+
 type AppProps = {
   accountLabel?: string;
   onSignOut?: () => void;
@@ -930,6 +1026,67 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
   const [processingProgressOverride, setProcessingProgressOverride] = useState<number | null>(null);
   const [recordingTime, setRecordingTime] = useState(0);
   const [completedTranscriptionId, setCompletedTranscriptionId] = useState<string | null>(null);
+
+  // ── LIVE CAPTIONS (Web Speech API) ──────────────────────────────────────────
+  const [liveTranscriptSupported] = useState(() =>
+    typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window)
+  );
+  const [interimCaption, setInterimCaption] = useState("");
+  const [finalCaptions, setFinalCaptions] = useState<string[]>([]);
+  const speechRecRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!liveTranscriptSupported) return;
+
+    if (isRecording) {
+      const SpeechRecognition =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const rec = new SpeechRecognition();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.maxAlternatives = 1;
+      rec.lang = "en-US";
+
+      rec.onresult = (e: any) => {
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) {
+            setFinalCaptions((prev) => [...prev.slice(-6), t.trim()]);
+          } else {
+            interim += t;
+          }
+        }
+        setInterimCaption(interim);
+      };
+
+      rec.onerror = () => { /* non-fatal — mic captured separately */ };
+      rec.onend = () => {
+        // Auto-restart while still recording (browser stops after ~60s of silence)
+        if (speechRecRef.current === rec) {
+          try { rec.start(); } catch { /* ignore */ }
+        }
+      };
+
+      speechRecRef.current = rec;
+      try { rec.start(); } catch { /* browser may deny */ }
+    } else {
+      // Recording stopped — tear down
+      if (speechRecRef.current) {
+        try { speechRecRef.current.stop(); } catch { /* ignore */ }
+        speechRecRef.current = null;
+      }
+      setInterimCaption("");
+      setFinalCaptions([]);
+    }
+
+    return () => {
+      if (speechRecRef.current) {
+        try { speechRecRef.current.stop(); } catch { /* ignore */ }
+        speechRecRef.current = null;
+      }
+    };
+  }, [isRecording, liveTranscriptSupported]);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [accentMode, setAccentMode] = useState<AccentMode>("standard");
@@ -3189,363 +3346,299 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
 
       {/* RECORDER */}
       {view === "recorder" && (
-        <div className="max-w-5xl mx-auto min-h-full flex flex-col items-center justify-start py-6 max-[360px]:py-4 md:py-10 space-y-8 max-[360px]:space-y-5">
-          <div className="flex flex-col items-center text-center space-y-4">
-            <div className="inline-flex items-center gap-3 px-6 py-3 rounded-full bg-indigo-600/10 text-indigo-400 border border-indigo-500/20">
-              <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
-              <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.2em]">Neural Engine Ready</span>
-            </div>
-            <h1 className="font-tech-display text-5xl max-[360px]:text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-black tracking-tight leading-[0.9]">
+        <div className="w-full max-w-5xl mx-auto flex flex-col gap-3 px-1">
+
+          {/* ── TOP BAR: title + state chip ─────────────── */}
+          <div className="flex items-center justify-between gap-4 px-1">
+            <h1 className="font-tech-display text-3xl md:text-4xl font-black tracking-tight leading-none">
               {isRecording ? "Listening." : isProcessing ? "Processing." : "Studio."}
             </h1>
-            <p className="text-slate-500 dark:text-slate-400 text-sm font-bold">
-              {isRecording
-                ? `Recording • ${formatTime(recordingTime)}`
-                : isProcessing
-                  ? `${activeProcessingPhase?.label || "Processing"} • ${processingProgressPercent}%`
-                  : "Tap to start"}
-            </p>
+            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-[9px] font-black uppercase tracking-[0.22em] transition-all duration-300 shrink-0 ${isRecording
+              ? "border-red-500/50 bg-red-500/10 text-red-400"
+              : isProcessing
+                ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-300"
+                : "border-emerald-500/30 bg-emerald-500/[0.08] text-emerald-400"
+              }`}>
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isRecording ? "bg-red-500 animate-pulse" : isProcessing ? "bg-cyan-400 animate-[spin_1.5s_linear_infinite]" : "bg-emerald-500"}`} />
+              {isRecording ? `REC  ${formatTime(recordingTime)}` : isProcessing ? `${activeProcessingPhase?.label || "Processing"}  ${processingProgressPercent}%` : "Ready"}
+            </div>
           </div>
-          <div className="flex items-center gap-3 max-[360px]:flex-col max-[360px]:items-stretch">
-            <button
-              onClick={() => (shareMeetingAudio ? clearDisplayStream() : void handleShareMeetingAudio())}
-              className={`px-5 py-3 rounded-2xl border font-black text-[10px] uppercase tracking-widest transition ${shareMeetingAudio
-                ? "app-cta text-white border-sky-300/40"
-                : "bg-transparent text-slate-100 border-slate-500/70 hover:border-sky-300/60"
-                }`}
-            >
-              {shareMeetingAudio ? "Stop sharing meeting" : "Share meeting audio"}
-            </button>
-            <span className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">
-              {shareMeetingAudio ? "Remote audio captured" : "Only mic audio recorded"}
-            </span>
-          </div>
-          <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 text-center max-w-xl">
-            {wakeLockActive
-              ? "Screen wake lock is active while recording."
-              : "If your phone sleeps, mobile browsers may pause capture. Keep the screen awake during sessions."}
-          </p>
-          {isProcessing && activeProcessingPhase && (
-            <div className="app-panel w-full max-w-3xl p-4 md:p-5 rounded-2xl space-y-4">
-              <div className="flex items-center justify-between gap-4">
-                <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-cyan-300">
-                  AI Processing Status
+
+          {/* ── Crash recovery banner (conditional) ─── */}
+          {sortedRecoverySessions.length > 0 && latestRecoverySessionId && (
+            <div className="w-full rounded-2xl bg-amber-500/[0.07] border border-amber-500/30 px-4 py-2.5 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span>⚠️</span>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-400">
+                  {sortedRecoverySessions.length} unsaved session{sortedRecoverySessions.length > 1 ? "s" : ""}
                 </p>
-                <span className="text-[11px] font-black text-cyan-300">{processingProgressPercent}%</span>
               </div>
-              <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-indigo-500 transition-all duration-400"
-                  style={{ width: `${processingProgressPercent}%` }}
-                />
+              <div className="flex gap-2">
+                <button type="button" onClick={() => void recoverSession(latestRecoverySessionId)}
+                  disabled={Boolean(restoringSessionId) || isProcessing}
+                  className="h-7 px-3 rounded-lg bg-amber-500/80 hover:bg-amber-500 text-white text-[9px] font-black uppercase tracking-[0.16em] transition disabled:opacity-50">
+                  {restoringSessionId === latestRecoverySessionId ? "↺ Restoring…" : "↺ Recover"}
+                </button>
+                <button type="button" onClick={() => void discardRecoverySession(latestRecoverySessionId)}
+                  disabled={Boolean(restoringSessionId) || isProcessing}
+                  className="h-7 px-3 rounded-lg border border-amber-500/40 text-amber-300 text-[9px] font-black uppercase tracking-[0.14em] hover:bg-amber-500/10 transition disabled:opacity-50">
+                  Dismiss
+                </button>
               </div>
-              <p className="text-sm font-bold text-slate-200">{activeProcessingPhase.label}</p>
-              <p className="text-xs font-semibold text-slate-400">{activeProcessingPhase.detail}</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            </div>
+          )}
+
+          {/* ── AI processing bar (conditional) ──────── */}
+          {isProcessing && activeProcessingPhase && (
+            <div className="w-full rounded-2xl bg-slate-950/80 border border-cyan-500/20 px-4 py-3 space-y-2 backdrop-blur-xl">
+              <div className="flex items-center justify-between gap-4">
+                <span className="font-tech-label text-[9px] font-black uppercase tracking-[0.22em] text-cyan-300">Processing</span>
+                <span className="text-[10px] font-black text-cyan-300">{processingProgressPercent}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                <div className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-indigo-500 transition-all duration-500"
+                  style={{ width: `${processingProgressPercent}%` }} />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
                 {PROCESSING_PHASES.map((phase, idx) => {
-                  const state =
-                    idx < activeProcessingIndex ? "done" : idx === activeProcessingIndex ? "active" : "pending";
+                  const state = idx < activeProcessingIndex ? "done" : idx === activeProcessingIndex ? "active" : "pending";
                   return (
-                    <div
-                      key={phase.key}
-                      className={`rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] border ${state === "done"
-                        ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
-                        : state === "active"
-                          ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-200"
-                          : "border-slate-600/30 bg-slate-900/40 text-slate-500"
-                        }`}
-                    >
-                      {phase.label}
-                    </div>
+                    <span key={phase.key} className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-[0.14em] border ${state === "done" ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-300" : state === "active" ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-200" : "border-slate-700/40 bg-slate-900/30 text-slate-600"}`}>
+                      {state === "done" ? "✓ " : state === "active" ? "↻ " : ""}{phase.label}
+                    </span>
                   );
                 })}
               </div>
             </div>
           )}
-          {sortedRecoverySessions.length > 0 && latestRecoverySessionId && (
-            <div className="app-panel w-full max-w-3xl p-4 md:p-5 rounded-2xl space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div className="space-y-1">
-                  <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-amber-400">Unsaved Recording Found</p>
-                  <p className="text-sm font-semibold text-slate-300">
-                    We found {sortedRecoverySessions.length} interrupted capture{sortedRecoverySessions.length > 1 ? "s" : ""}.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void recoverSession(latestRecoverySessionId)}
-                    disabled={Boolean(restoringSessionId) || isProcessing}
-                    className="app-cta h-10 px-4 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {restoringSessionId === latestRecoverySessionId ? "Restoring..." : "Restore Latest"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void discardRecoverySession(latestRecoverySessionId)}
-                    disabled={Boolean(restoringSessionId) || isProcessing}
-                    className="h-10 px-4 rounded-xl border border-amber-500/40 text-amber-300 text-[10px] font-black uppercase tracking-[0.18em] hover:bg-amber-500/10 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    Dismiss Latest
-                  </button>
-                  {sortedRecoverySessions.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => void discardAllRecoverySessions()}
-                      disabled={Boolean(restoringSessionId) || isProcessing}
-                      className="h-10 px-4 rounded-xl border border-slate-500/40 text-slate-300 text-[10px] font-black uppercase tracking-[0.18em] hover:bg-slate-500/10 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      Clear All
+
+          {/* ── MAIN BODY: 2-column on desktop ───────── */}
+          <div className="w-full grid grid-cols-1 md:grid-cols-[1fr_1.1fr] gap-3">
+
+            {/* LEFT: Hero stage (record + controls) */}
+            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950/60 border border-white/[0.07] shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] p-5 flex flex-col items-center justify-between gap-4">
+
+              {/* ambient glow while recording */}
+              <div className={`pointer-events-none absolute inset-0 transition-opacity duration-700 ${isRecording ? "opacity-100" : "opacity-0"}`}>
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 rounded-full bg-red-600/15 blur-[60px]" />
+              </div>
+
+              {/* Record / Stop button */}
+              <div className="relative flex items-center justify-center py-2">
+                {isRecording ? (
+                  <div className="relative flex items-center justify-center">
+                    <NeuralVisualizer analyser={analyserRef.current} />
+                    <button onClick={stopRecording}
+                      className="absolute inset-0 m-auto w-20 h-20 bg-red-600 hover:bg-red-500 rounded-2xl flex items-center justify-center text-white shadow-[0_0_50px_rgba(220,38,38,0.5)] hover:scale-105 active:scale-95 transition-all duration-200"
+                      title="Stop recording">
+                      <StopIcon className="w-8 h-8" />
                     </button>
-                  )}
-                </div>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Latest saved session: {latestRecoveryTimestamp > 0 ? formatRecordedAt(new Date(latestRecoveryTimestamp).toISOString()) : "Unknown timestamp"}
-              </p>
-            </div>
-          )}
-          <div className="app-panel w-full max-w-3xl p-6 max-[360px]:p-4 rounded-[2rem] max-[360px]:rounded-2xl space-y-5 max-[360px]:space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div>
-                <p className="font-tech-label text-[10px] font-black uppercase tracking-[0.32em] text-emerald-500">Recording Diagnostics</p>
-                <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-                  Validate mic and remote/system audio levels before recording.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => (diagnosticsEnabled ? stopDiagnostics() : void startDiagnostics())}
-                disabled={diagnosticsLoading || isRecording || isProcessing}
-                className={`h-10 px-5 rounded-xl text-[10px] font-black uppercase tracking-[0.24em] transition ${diagnosticsEnabled
-                  ? "bg-rose-600 text-white hover:bg-rose-700"
-                  : "app-cta text-white"
-                  } disabled:opacity-60 disabled:cursor-not-allowed`}
-              >
-                {diagnosticsLoading ? "Starting..." : diagnosticsEnabled ? "Stop Diagnostics" : "Start Diagnostics"}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="app-panel p-4 rounded-2xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">Mic Input</span>
-                  <span className="text-xs font-black text-emerald-500">{Math.round(micLevel * 100)}%</span>
-                </div>
-                <div className="h-3 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-emerald-500 to-cyan-500 transition-all duration-150"
-                    style={{ width: `${Math.round(micLevel * 100)}%` }}
-                  />
-                </div>
-                <div className="flex justify-start">
-                  <span className={`px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-[0.18em] ${getBadgeClass(micConfidenceState)}`}>
-                    {micConfidenceState === "ok" ? "Mic OK" : micConfidenceState === "warming" ? "Mic stabilizing" : "Mic idle"}
-                  </span>
-                </div>
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                  Speak for 1-2s. Badge turns green after crossing {Math.round(MIC_CONFIDENCE_THRESHOLD * 100)}% steadily.
-                </p>
-              </div>
-
-              <div className="app-panel p-4 rounded-2xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-tech-label text-[10px] font-black uppercase tracking-[0.24em] text-slate-500">System Input</span>
-                  <span className={`text-xs font-black ${hasSystemDiagnosticsInput ? "text-sky-500" : "text-slate-500"}`}>
-                    {Math.round(systemLevel * 100)}%
-                  </span>
-                </div>
-                <div className="h-3 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-sky-400 via-cyan-500 to-blue-500 transition-all duration-150"
-                    style={{ width: `${Math.round(systemLevel * 100)}%` }}
-                  />
-                </div>
-                <div className="flex justify-start">
-                  <span className={`px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-[0.18em] ${getBadgeClass(systemConfidenceState)}`}>
-                    {systemConfidenceState === "ok"
-                      ? "System OK"
-                      : systemConfidenceState === "warming"
-                        ? "System stabilizing"
-                        : systemConfidenceState === "blocked"
-                          ? "No system feed"
-                          : "System idle"}
-                  </span>
-                </div>
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                  {hasSystemDiagnosticsInput
-                    ? "Play the remote speaker audio and confirm this level responds."
-                    : "Share meeting audio first to validate remote speaker capture."}
-                </p>
-              </div>
-            </div>
-
-            {diagnosticsNote && <p className="text-xs font-semibold text-slate-500 dark:text-slate-300">{diagnosticsNote}</p>}
-          </div>
-          {/* RECORD + UPLOAD (SIDE BY SIDE) */}
-          <div className="relative flex flex-wrap items-center justify-center gap-5 max-[360px]:gap-3">
-            {/* MAIN RECORD CONTROL */}
-            <div className="relative group">
-              {isRecording ? (
-                <div className="relative flex items-center justify-center">
-                  <NeuralVisualizer analyser={analyserRef.current} />
-                  <button
-                    onClick={stopRecording}
-                    className="absolute inset-0 m-auto w-28 h-28 max-[360px]:w-20 max-[360px]:h-20 bg-red-600 rounded-[2.5rem] max-[360px]:rounded-2xl flex items-center justify-center text-white shadow-[0_0_80px_rgba(220,38,38,0.5)] transform hover:scale-110 transition-transform"
-                  >
-                    <StopIcon className="w-10 h-10" />
+                  </div>
+                ) : (
+                  <button onClick={startRecording} disabled={isProcessing}
+                    className={`group relative w-32 h-32 md:w-36 md:h-36 rounded-3xl flex flex-col items-center justify-center gap-2 text-white transition-all duration-200 ${isProcessing
+                      ? "bg-slate-800/60 cursor-not-allowed opacity-50"
+                      : "bg-gradient-to-br from-indigo-500 via-violet-600 to-purple-700 shadow-[0_0_60px_rgba(99,102,241,0.4)] hover:shadow-[0_0_90px_rgba(99,102,241,0.65)] hover:scale-[1.04] active:scale-95"
+                      }`}
+                    title={isProcessing ? "Processing…" : "Start recording"}>
+                    {!isProcessing && <div className="absolute inset-0 rounded-3xl border-2 border-white/10 pointer-events-none" />}
+                    <MicIcon className="w-10 h-10 md:w-12 md:h-12 drop-shadow-lg group-hover:scale-110 transition-transform duration-200" />
+                    <span className="font-tech-label font-black text-[9px] uppercase tracking-[0.28em] text-white/70">Record</span>
                   </button>
+                )}
+              </div>
+
+              {/* Live caption strip — shown only while recording + SpeechRecognition supported */}
+              {isRecording && liveTranscriptSupported && (
+                <div className="w-full rounded-2xl bg-black/30 border border-white/[0.06] px-4 py-3 space-y-1 backdrop-blur-md min-h-[60px] flex flex-col justify-center">
+                  {/* Previous finalized lines */}
+                  {finalCaptions.slice(-2).map((line, i) => (
+                    <p key={i} className="text-[10px] text-slate-500 truncate leading-relaxed">{line}</p>
+                  ))}
+                  {/* Interim — current spoken words */}
+                  <div className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
+                    <p className="text-[11px] font-semibold bg-gradient-to-r from-white to-indigo-300 bg-clip-text text-transparent leading-relaxed truncate">
+                      {interimCaption || (finalCaptions.length === 0 ? "Listening…" : "")}
+                    </p>
+                  </div>
                 </div>
-              ) : (
-                <button
-                  onClick={startRecording}
-                  disabled={isProcessing}
-                  className={`w-56 h-56 max-[360px]:w-44 max-[360px]:h-44 ${isProcessing ? "bg-indigo-900 animate-pulse" : "bg-indigo-600"
-                    } rounded-[2.5rem] max-[360px]:rounded-2xl flex items-center justify-center text-white shadow-[0_0_100px_rgba(79,70,229,0.35)] transform hover:scale-105 active:scale-95 transition-all`}
-                >
-                  <MicIcon className="w-20 h-20 max-[360px]:w-14 max-[360px]:h-14 group-hover:rotate-12 transition-transform" />
-                </button>
               )}
 
-              <Tooltip text={isRecording ? "Stop Capture" : "Start Capture"} />
+              {/* Share meeting audio */}
+              <button
+                onClick={() => (shareMeetingAudio ? clearDisplayStream() : void handleShareMeetingAudio())}
+                className={`w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl border text-[10px] font-black uppercase tracking-widest transition-all ${shareMeetingAudio
+                  ? "bg-sky-500/15 border-sky-400/40 text-sky-300 hover:bg-sky-500/20"
+                  : "bg-white/[0.04] border-white/10 text-slate-400 hover:border-white/20 hover:text-white"
+                  }`}>
+                <span>{shareMeetingAudio ? "🔊" : "🎧"}</span>
+                {shareMeetingAudio ? "Stop sharing" : "Share meeting audio"}
+              </button>
+
+              {/* Upload + Transcribe */}
+              {!isRecording && (
+                <div className="w-full flex items-center gap-2">
+                  <label className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-white/10 bg-white/[0.04] text-white/60 text-[9px] font-black uppercase tracking-widest cursor-pointer transition-all ${isProcessing ? "opacity-30 pointer-events-none" : "hover:bg-white/[0.09] hover:text-white hover:border-white/20"}`}>
+                    <FolderIcon className="w-3.5 h-3.5" /><span>Upload</span>
+                    <input type="file" accept="audio/*,video/*" hidden onChange={async (e) => {
+                      const file = e.target.files?.[0]; if (!file) return;
+                      e.currentTarget.value = ""; await handleUploadAudio(file);
+                    }} />
+                  </label>
+                  <span className="text-slate-600 text-[8px] font-black uppercase tracking-widest shrink-0">or</span>
+                  <label className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.07] text-indigo-300 text-[9px] font-black uppercase tracking-widest cursor-pointer transition-all ${isProcessing ? "opacity-30 pointer-events-none" : "hover:bg-indigo-500/15 hover:text-indigo-100 hover:border-indigo-400/50"}`}>
+                    <span>⚡</span><span>Transcribe</span>
+                    <input type="file" accept="audio/*,video/*" hidden onChange={async (e) => {
+                      const file = e.target.files?.[0]; if (!file) return;
+                      e.currentTarget.value = ""; await handleUploadAudio(file);
+                    }} />
+                  </label>
+                </div>
+              )}
             </div>
 
-            {/* UPLOAD CONTROL (only when not recording) */}
-            {!isRecording && (
-              <div className="flex flex-col items-center gap-3">
-                <div className="relative group">
-                  <label
-                    className={`cursor-pointer select-none flex items-center gap-2 px-4 max-[360px]:px-3 h-14 max-[360px]:h-11 rounded-2xl max-[360px]:rounded-xl
-	          bg-white/[0.04] border border-white/10 text-white/80 backdrop-blur-md
-	          ${isProcessing ? "opacity-40 pointer-events-none" : "hover:bg-white/[0.07] hover:text-white hover:scale-[1.02]"}
-	          transition`}
-                    title="Upload an audio/video file to transcribe + analyze"
-                  >
-                    <FolderIcon className="w-5 h-5" />
-                    <span className="text-[10px] font-black uppercase tracking-widest">Upload</span>
-                    <input
-                      type="file"
-                      accept="audio/*,video/*"
-                      hidden
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        e.currentTarget.value = "";
-                        await handleUploadAudio(file);
-                      }}
-                    />
-                  </label>
-                  <Tooltip text="Upload Audio" position="bottom" />
-                </div>
+            {/* RIGHT: Diagnostics + Settings */}
+            <div className="flex flex-col gap-3">
 
-                {/* QUICK RECORD STRIP — visible when idle */}
-                {!isProcessing && (
+              {/* Diagnostics card */}
+              <div className="rounded-3xl bg-slate-950/80 border border-white/[0.07] backdrop-blur-xl overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.05]">
                   <div className="flex items-center gap-2">
-                    <button
-                      id="quick-record-btn"
-                      type="button"
-                      onClick={startRecording}
-                      disabled={isProcessing}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-red-600/80 hover:bg-red-600 text-white text-[9px] font-black uppercase tracking-widest transition-all hover:scale-105 shadow-md"
-                      title="Quick Record — saves locally, no internet needed"
-                    >
-                      <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                      Record
-                    </button>
-                    <span className="text-slate-500 text-[9px] font-black uppercase tracking-widest">or</span>
-                    <label
-                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 text-white text-[9px] font-black uppercase tracking-widest transition-all hover:scale-105 shadow-md cursor-pointer ${isProcessing ? "opacity-40 pointer-events-none" : ""
-                        }`}
-                      title="Select an audio file and immediately transcribe it"
-                    >
-                      <span>⚡</span>
-                      Transcribe
-                      <input
-                        type="file"
-                        accept="audio/*,video/*"
-                        hidden
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          e.currentTarget.value = "";
-                          await handleUploadAudio(file);
-                        }}
-                      />
-                    </label>
+                    <span className="text-sm">🎙️</span>
+                    <span className="font-tech-label text-[9px] font-black uppercase tracking-[0.26em] text-slate-400">Diagnostics</span>
+                  </div>
+                  <button type="button"
+                    onClick={() => (diagnosticsEnabled ? stopDiagnostics() : void startDiagnostics())}
+                    disabled={diagnosticsLoading || isRecording || isProcessing}
+                    className={`h-7 px-3 rounded-lg text-[9px] font-black uppercase tracking-[0.18em] transition-all ${diagnosticsEnabled
+                      ? "bg-rose-600/80 hover:bg-rose-600 text-white"
+                      : "bg-indigo-600/70 hover:bg-indigo-600 text-white"
+                      } disabled:opacity-40 disabled:cursor-not-allowed`}>
+                    {diagnosticsLoading ? "…" : diagnosticsEnabled ? "Stop" : "Test mic"}
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 divide-x divide-white/[0.05]">
+                  {/* Mic meter */}
+                  <div className="p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs">🎤</span>
+                        <span className="font-tech-label text-[8px] font-black uppercase tracking-[0.18em] text-slate-400">Mic</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`px-1.5 py-0.5 rounded border text-[8px] font-black uppercase ${getBadgeClass(micConfidenceState)}`}>
+                          {micConfidenceState === "ok" ? "✓" : micConfidenceState === "warming" ? "↑" : "·"}
+                        </span>
+                        <span className="text-[10px] font-black text-emerald-400">{Math.round(micLevel * 100)}%</span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                      <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-all duration-150"
+                        style={{ width: `${Math.round(micLevel * 100)}%` }} />
+                    </div>
+                  </div>
+                  {/* System meter */}
+                  <div className="p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs">🖥️</span>
+                        <span className="font-tech-label text-[8px] font-black uppercase tracking-[0.18em] text-slate-400">System</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`px-1.5 py-0.5 rounded border text-[8px] font-black uppercase ${getBadgeClass(systemConfidenceState)}`}>
+                          {systemConfidenceState === "ok" ? "✓" : systemConfidenceState === "warming" ? "↑" : systemConfidenceState === "blocked" ? "✕" : "·"}
+                        </span>
+                        <span className={`text-[10px] font-black ${hasSystemDiagnosticsInput ? "text-sky-400" : "text-slate-600"}`}>
+                          {Math.round(systemLevel * 100)}%
+                        </span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                      <div className="h-full rounded-full bg-gradient-to-r from-sky-400 to-blue-400 transition-all duration-150"
+                        style={{ width: `${Math.round(systemLevel * 100)}%` }} />
+                    </div>
+                  </div>
+                </div>
+                {diagnosticsNote && (
+                  <div className="px-4 py-2 border-t border-white/[0.04]">
+                    <p className="text-[9px] font-semibold text-slate-500">{diagnosticsNote}</p>
                   </div>
                 )}
               </div>
-            )}
-          </div>
-          <div className="app-panel w-full max-w-5xl p-6 max-[360px]:p-4 rounded-[2rem] max-[360px]:rounded-2xl grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 max-[360px]:gap-3">
-            <div className="space-y-2">
-              <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest ml-4">Input</label>
-              <select
-                value={inputSource}
-                onChange={(e) => setInputSource(e.target.value)}
-                className="w-full bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white border-none rounded-2xl p-4 text-[11px] font-black uppercase tracking-widest outline-none focus:ring-1 ring-indigo-500"
-              >
-                <option>Studio Mic</option>
-                <option>System Audio</option>
-              </select>
-            </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest ml-3">Mic Device</label>
-                <button
-                  type="button"
-                  onClick={() => void refreshAudioInputs()}
-                  className="text-[9px] font-black uppercase tracking-widest text-indigo-500 hover:text-indigo-400"
-                >
-                  Refresh
-                </button>
-              </div>
-              <select
-                value={selectedMicDeviceId}
-                onChange={(e) => setSelectedMicDeviceId(e.target.value)}
-                className="w-full bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white border-none rounded-2xl p-4 text-[11px] font-black uppercase tracking-widest outline-none focus:ring-1 ring-indigo-500"
-              >
-                <option value="default">System Default</option>
-                {audioInputDevices.map((device, index) => (
-                  <option key={device.deviceId || `mic-${index}`} value={device.deviceId}>
-                    {(device.label || `Microphone ${index + 1}`).slice(0, 42)}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest ml-4">Accent</label>
-              <select
-                value={accentMode}
-                onChange={(e) => setAccentMode(e.target.value as any)}
-                className="w-full bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white border-none rounded-2xl p-4 text-[11px] font-black uppercase tracking-widest outline-none focus:ring-1 ring-indigo-500"
-              >
-                <option value="standard">Standard</option>
-                <option value="uk">UK Dialect</option>
-                <option value="nigerian">Nigerian Patois</option>
-              </select>
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[9px] font-black uppercase text-slate-500 tracking-widest ml-4">
-                Gate: {gateSensitivity}%
-              </label>
-              <div className="pt-1">
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={gateSensitivity}
-                  onChange={(e) => setGateSensitivity(parseInt(e.target.value, 10))}
-                  className="w-full h-1 bg-slate-300 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                />
+              {/* Settings tiles — 2x2 grid */}
+              <div className="grid grid-cols-2 gap-2.5">
+                {/* Input */}
+                <div className="rounded-2xl bg-slate-950/70 border border-white/[0.07] px-3 py-2.5 space-y-1.5 backdrop-blur-md">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs">🔌</span>
+                    <label className="text-[8px] font-black uppercase tracking-widest text-slate-500">Input</label>
+                  </div>
+                  <select value={inputSource} onChange={(e) => setInputSource(e.target.value)}
+                    className="w-full bg-slate-900 text-white border-none text-[10px] font-black uppercase tracking-widest outline-none cursor-pointer rounded-md">
+                    <option className="bg-slate-900">Studio Mic</option>
+                    <option className="bg-slate-900">System Audio</option>
+                  </select>
+                </div>
+                {/* Mic device */}
+                <div className="rounded-2xl bg-slate-950/70 border border-white/[0.07] px-3 py-2.5 space-y-1.5 backdrop-blur-md">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs">🎙️</span>
+                      <label className="text-[8px] font-black uppercase tracking-widest text-slate-500">Mic</label>
+                    </div>
+                    <button type="button" onClick={() => void refreshAudioInputs()}
+                      className="text-[10px] font-black text-indigo-500 hover:text-indigo-400 transition">↺</button>
+                  </div>
+                  <select value={selectedMicDeviceId} onChange={(e) => setSelectedMicDeviceId(e.target.value)}
+                    className="w-full bg-slate-900 text-white border-none text-[10px] font-black uppercase tracking-widest outline-none cursor-pointer truncate rounded-md">
+                    <option className="bg-slate-900" value="default">Default</option>
+                    {audioInputDevices.map((device, index) => (
+                      <option className="bg-slate-900" key={device.deviceId || `mic-${index}`} value={device.deviceId}>
+                        {(device.label || `Mic ${index + 1}`).slice(0, 20)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {/* Accent */}
+                <div className="rounded-2xl bg-slate-950/70 border border-white/[0.07] px-3 py-2.5 space-y-1.5 backdrop-blur-md">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs">🌍</span>
+                    <label className="text-[8px] font-black uppercase tracking-widest text-slate-500">Accent</label>
+                  </div>
+                  <select value={accentMode} onChange={(e) => setAccentMode(e.target.value as any)}
+                    className="w-full bg-slate-900 text-white border-none text-[10px] font-black uppercase tracking-widest outline-none cursor-pointer rounded-md">
+                    <option className="bg-slate-900" value="standard">Standard</option>
+                    <option className="bg-slate-900" value="uk">UK English</option>
+                    <option className="bg-slate-900" value="nigerian">Nigerian Patois</option>
+                    <option className="bg-slate-900" value="ghanaian">Ghanaian English</option>
+                    <option className="bg-slate-900" value="southafrican">South African</option>
+                    <option className="bg-slate-900" value="kenyan">Kenyan / Swahili</option>
+                  </select>
+                </div>
+                {/* Gate */}
+                <div className="rounded-2xl bg-slate-950/70 border border-white/[0.07] px-3 py-2.5 space-y-1.5 backdrop-blur-md">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs">🎚️</span>
+                      <label className="text-[8px] font-black uppercase tracking-widest text-slate-500">Gate</label>
+                    </div>
+                    <span className="text-[9px] font-black text-indigo-400">{gateSensitivity}%</span>
+                  </div>
+                  <input type="range" min="0" max="100" value={gateSensitivity}
+                    onChange={(e) => setGateSensitivity(parseInt(e.target.value, 10))}
+                    className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
+
+
+
+
 
       {/* DETAILS */}
       {view === "details" && selectedMeeting && (
@@ -3781,6 +3874,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                 Backup to Cloud
               </button>
             </div>
+
+            {/* ── Integrations panel ── */}
+            <IntegrationPanel meeting={selectedMeeting} />
+
           </div>
         </div>
       )}
@@ -4064,8 +4161,11 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     className="w-full bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white border-none rounded-2xl p-4 text-[11px] font-black uppercase tracking-widest outline-none focus:ring-1 ring-indigo-500"
                   >
                     <option value="standard">Standard</option>
-                    <option value="uk">UK Dialect</option>
+                    <option value="uk">UK English</option>
                     <option value="nigerian">Nigerian Patois</option>
+                    <option value="ghanaian">Ghanaian English</option>
+                    <option value="southafrican">South African</option>
+                    <option value="kenyan">Kenyan / Swahili</option>
                   </select>
                 </div>
 
@@ -4263,6 +4363,16 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── TEAM WORKSPACE ──────────────────────────────────────────────── */}
+      {view === "team" && (
+        <TeamWorkspaceView
+          firebaseUid={firebaseUid}
+          userEmail={accountLabel}
+          meetings={meetings}
+          showToast={showToast}
+        />
       )}
     </Layout>
   );

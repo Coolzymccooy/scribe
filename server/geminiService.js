@@ -1,4 +1,4 @@
-﻿import { GoogleGenAI, Type, Modality } from '@google/genai';
+import { GoogleGenAI, Type, Modality } from '@google/genai';
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
@@ -142,6 +142,20 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
     Preserve common Nigerian phrases and expressions as spoken: e.g., 'abi', 'o', 'na', 'e don happen', 'how you dey', 'no vex', 'oga', 'aunty', 'bros'.
     Do NOT over-correct Nigerian Pidgin to standard English. Capture the speaker's actual words faithfully.
     If a speaker code-switches between formal English and Pidgin, transcribe both accurately.`,
+    ghanaian: `You are transcribing Ghanaian English (Ghanaian Pidgin / Akan-influenced English).
+    Ghanaian English is influenced by Twi, Ga, Ewe and local Pidgin. Preserve authentic expressions.
+    Common phrases to preserve as spoken: 'chale' (friend/buddy), 'herh' (exclamation), 'ei' (surprise), 'ancient' (used ironically), 'borla' (waste), 'gyimii' (foolishness).
+    Speakers frequently drop articles and use tonal stress. Do NOT over-correct to Standard English.
+    If a speaker switches between Twi phrases and English, transcribe both faithfully.`,
+    southafrican: `You are transcribing South African English (influenced by Zulu, Xhosa, Afrikaans and Cape Malay).
+    Preserve authentic SA expressions: 'eish' (frustration/surprise), 'lekker' (great/nice), 'braai' (barbecue), 'ja' (yes), 'now-now' (very soon), 'shame' (sympathy), 'robot' (traffic light), 'bakkie' (pickup truck), 'bra/bru' (friend).
+    South African English has distinctive vowel shifts and rhythm — do not flatten to Standard English.
+    Code-switching between Zulu, Xhosa, Sotho, or Afrikaans and English should be transcribed faithfully.`,
+    kenyan: `You are transcribing Kenyan English (Swahili-influenced, with Sheng code-switching).
+    Kenyan English blends formal English with Swahili and Sheng (urban slang). Preserve authentic expressions.
+    Common phrases: 'sawa' (okay), 'mambo' (what's up), 'poa' (cool/fine), 'si unaona' (you see), 'kwisha' (finished/done), 'mzuri' (good), 'buda' (guy/friend), 'nilikuwa' (I was).
+    Speakers frequently insert Swahili or Sheng into English sentences — preserve both accurately.
+    Do NOT flatten Sheng slang to Standard English. Transcribe as spoken.`,
   };
 
   const dialectNote = accentInstructions[accent] || accentInstructions.standard;

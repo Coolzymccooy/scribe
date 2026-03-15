@@ -251,14 +251,14 @@ const TeamWorkspaceView: React.FC<TeamWorkspaceViewProps> = ({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Create */}
-          <div className="p-8 rounded-[2.5rem] bg-indigo-600/10 border border-indigo-500/20 space-y-4 shadow-xl">
+          <div className="p-8 rounded-[2.5rem] bg-violet-600/10 border border-violet-500/20 space-y-4 shadow-xl">
             <h3 className="text-xl font-black tracking-tight">Create Workspace</h3>
             <p className="text-sm text-slate-500">Start a new team and invite colleagues.</p>
             <input value={newOrgName} onChange={e => setNewOrgName(e.target.value)}
               placeholder="Team name (e.g. Acme Sales)"
               className="w-full rounded-2xl px-4 py-3 bg-slate-100 dark:bg-white/5 border border-white/10 text-sm outline-none placeholder-slate-400 dark:text-white" />
             <button onClick={handleCreateOrg} disabled={loading || !newOrgName.trim()}
-              className="w-full py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-[10px] uppercase tracking-widest disabled:opacity-50 transition-all">
+              className="w-full py-3 rounded-2xl bg-violet-600 hover:bg-violet-700 text-white font-black text-[10px] uppercase tracking-widest disabled:opacity-50 transition-all">
               {loading ? "Creating…" : "Create Workspace"}
             </button>
           </div>
@@ -290,12 +290,12 @@ const TeamWorkspaceView: React.FC<TeamWorkspaceViewProps> = ({
         <div>
           <h1 className="font-tech-display text-4xl md:text-6xl font-black tracking-tight uppercase">{org.name}</h1>
           <p className="text-slate-500 font-bold uppercase tracking-widest text-[10px] mt-1">
-            {org.members.length} member{org.members.length !== 1 ? "s" : ""} · Your role: <span className="text-indigo-400">{myRole}</span>
+            {org.members.length} member{org.members.length !== 1 ? "s" : ""} · Your role: <span className="text-violet-400">{myRole}</span>
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <button onClick={handleCopyInviteLink}
-            className="px-4 py-2 rounded-xl bg-indigo-600/10 border border-indigo-500/30 text-indigo-400 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600/20 transition-all">
+            className="px-4 py-2 rounded-xl bg-violet-600/10 border border-violet-500/30 text-violet-400 text-[10px] font-black uppercase tracking-widest hover:bg-violet-600/20 transition-all">
             🔗 Copy Invite Code
           </button>
           {myRole === "owner" && (
@@ -311,7 +311,7 @@ const TeamWorkspaceView: React.FC<TeamWorkspaceViewProps> = ({
       <div className="flex gap-2">
         {(["library", "members", "launch"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
-            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === t ? "bg-indigo-600 text-white" : "bg-white/5 border border-white/10 text-slate-400 hover:bg-white/10"}`}>
+            className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === t ? "bg-violet-600 text-white" : "bg-white/5 border border-white/10 text-slate-400 hover:bg-white/10"}`}>
             {t === "library" ? "📁 Shared Library" : t === "members" ? "👥 Members" : "🚀 Smart Launch"}
           </button>
         ))}
@@ -326,7 +326,7 @@ const TeamWorkspaceView: React.FC<TeamWorkspaceViewProps> = ({
             <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto pr-1">
               {meetings.filter(m => m.transcript.length > 0).map((m: any) => (
                 <button key={m.id} onClick={() => handleShareMeeting(m)}
-                  className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-tight text-slate-600 dark:text-slate-300 hover:bg-indigo-500/10 hover:text-indigo-400 transition-all truncate max-w-[200px]">
+                  className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-tight text-slate-600 dark:text-slate-300 hover:bg-violet-500/10 hover:text-violet-400 transition-all truncate max-w-[200px]">
                   {m.title}
                 </button>
               ))}
@@ -370,7 +370,7 @@ const TeamWorkspaceView: React.FC<TeamWorkspaceViewProps> = ({
                   Joined {new Date(m.joinedAt).toLocaleDateString()}
                 </p>
               </div>
-              <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${m.role === "owner" ? "bg-indigo-600 text-white" : m.role === "admin" ? "bg-amber-500/20 text-amber-400" : "bg-slate-200 dark:bg-white/5 text-slate-500"}`}>
+              <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${m.role === "owner" ? "bg-violet-600 text-white" : m.role === "admin" ? "bg-amber-500/20 text-amber-400" : "bg-slate-200 dark:bg-white/5 text-slate-500"}`}>
                 {m.role}
               </span>
             </div>
@@ -381,12 +381,12 @@ const TeamWorkspaceView: React.FC<TeamWorkspaceViewProps> = ({
       {/* Smart Meeting Launch */}
       {tab === "launch" && (
         <div className="space-y-4">
-          <div className="p-8 rounded-[2.5rem] bg-gradient-to-br from-indigo-600/20 to-purple-600/10 border border-indigo-500/20 space-y-5 shadow-xl">
+          <div className="p-8 rounded-[2.5rem] bg-gradient-to-br from-violet-600/20 to-purple-600/10 border border-violet-500/20 space-y-5 shadow-xl">
             <div className="flex items-center gap-3">
               <span className="text-4xl">🚀</span>
               <div>
                 <h3 className="text-xl font-black tracking-tight">Smart Meeting Launch</h3>
-                <p className="text-[10px] text-indigo-300 font-bold uppercase tracking-widest">Auto-record any meeting in 3 steps</p>
+                <p className="text-[10px] text-violet-300 font-bold uppercase tracking-widest">Auto-record any meeting in 3 steps</p>
               </div>
             </div>
 
@@ -397,7 +397,7 @@ const TeamWorkspaceView: React.FC<TeamWorkspaceViewProps> = ({
                 { n: "3", icon: "⏺", title: "Click Record", body: "Hit the Record button. ScribeAI captures the full conversation. Stop when done — Gemini transcribes and summarises automatically." },
               ].map(step => (
                 <li key={step.n} className="flex items-start gap-4 p-4 rounded-2xl bg-white/5 border border-white/10">
-                  <span className="w-8 h-8 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-sm shrink-0">{step.n}</span>
+                  <span className="w-8 h-8 rounded-xl bg-violet-600 flex items-center justify-center text-white font-black text-sm shrink-0">{step.n}</span>
                   <div>
                     <p className="font-black text-sm">{step.icon} {step.title}</p>
                     <p className="text-xs text-slate-400 mt-0.5">{step.body}</p>
@@ -448,10 +448,10 @@ const IntegrationPanel: React.FC<{ meeting: any }> = ({ meeting }) => {
   return (
     <div className="rounded-[2.5rem] bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 overflow-hidden shadow-lg">
       <p className="px-6 pt-5 pb-2 text-[9px] font-black uppercase tracking-widest text-slate-500">Push to…</p>
-      {pushStatus && <p className="px-6 pb-2 text-[10px] font-semibold text-indigo-400">{pushStatus}</p>}
+      {pushStatus && <p className="px-6 pb-2 text-[10px] font-semibold text-violet-400">{pushStatus}</p>}
 
       {/* Slack */}
-      <button className="w-full px-6 py-3 text-left text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-white hover:bg-indigo-50 dark:hover:bg-white/5 flex items-center justify-between transition-all"
+      <button className="w-full px-6 py-3 text-left text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-violet-500 dark:hover:text-white hover:bg-violet-50 dark:hover:bg-white/5 flex items-center justify-between transition-all"
         onClick={() => setSlackOpen(o => !o)}>
         <span>🔔 Slack</span><span className="text-slate-400">{slackOpen ? "▲" : "▼"}</span>
       </button>
@@ -461,14 +461,14 @@ const IntegrationPanel: React.FC<{ meeting: any }> = ({ meeting }) => {
             onChange={e => setSlackWebhook(e.target.value)}
             className="w-full text-[10px] bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl px-3 py-2 outline-none text-slate-700 dark:text-slate-200 placeholder-slate-400" />
           <button onClick={handleSlackPush}
-            className="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest transition-all">
+            className="w-full py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-[10px] font-black uppercase tracking-widest transition-all">
             Send Notes
           </button>
         </div>
       )}
 
       {/* Notion */}
-      <button className="w-full px-6 py-3 text-left text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-white hover:bg-indigo-50 dark:hover:bg-white/5 flex items-center justify-between transition-all"
+      <button className="w-full px-6 py-3 text-left text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-violet-500 dark:hover:text-white hover:bg-violet-50 dark:hover:bg-white/5 flex items-center justify-between transition-all"
         onClick={() => setNotionOpen(o => !o)}>
         <span>📝 Notion</span><span className="text-slate-400">{notionOpen ? "▲" : "▼"}</span>
       </button>
@@ -481,7 +481,7 @@ const IntegrationPanel: React.FC<{ meeting: any }> = ({ meeting }) => {
             onChange={e => setNotionDb(e.target.value)}
             className="w-full text-[10px] bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl px-3 py-2 outline-none text-slate-700 dark:text-slate-200 placeholder-slate-400" />
           <button onClick={handleNotionPush}
-            className="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest transition-all">
+            className="w-full py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-white text-[10px] font-black uppercase tracking-widest transition-all">
             Create Page
           </button>
         </div>
@@ -944,7 +944,7 @@ const Layout: React.FC<LayoutProps> = ({
             setView("landing");
             setIsMobileMenuOpen(false);
           }}
-          className="group flex items-center gap-3.5 cursor-pointer mb-2 text-left"
+          className="group flex items-center gap-3.5 cursor-pointer mb-3 text-left"
           title="Go to landing page"
           aria-label="Go to landing page"
         >
@@ -954,7 +954,7 @@ const Layout: React.FC<LayoutProps> = ({
               alt="ScribeAI"
               className="h-9 sm:h-10 w-auto object-contain transition-transform group-hover:scale-[1.02]"
             />
-            <span className="font-tech-label text-[10px] sm:text-[11px] tracking-[0.08em] text-cyan-200/95">ScribeAI</span>
+            <span className="font-tech-label text-[10px] sm:text-[11px] tracking-[0.08em] text-violet-300/90">ScribeAI</span>
           </div>
         </button>
 
@@ -1047,11 +1047,11 @@ const Layout: React.FC<LayoutProps> = ({
             <button
               type="button"
               onClick={() => setView("landing")}
-              className="flex items-center gap-2 rounded-xl px-2 py-1 border border-white/10 bg-white/5 hover:bg-white/10 transition"
+              className="flex items-center gap-2 rounded-xl px-3 py-1.5 border border-violet-500/15 bg-violet-500/5 hover:bg-violet-500/10 transition"
               title="Go to landing page"
               aria-label="Go to landing page"
             >
-              <span className="font-tech-label text-[10px] uppercase tracking-[0.12em] text-cyan-100">Home</span>
+              <span className="font-tech-label text-[10px] uppercase tracking-[0.12em] text-violet-200">Home</span>
             </button>
           </div>
 
@@ -1059,7 +1059,7 @@ const Layout: React.FC<LayoutProps> = ({
             <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-600" />
             <input
               type="text"
-              placeholder="Scan neural cache..."
+              placeholder="Search meetings, transcripts..."
               className="machine-input w-full pl-11 pr-4 py-2.5 text-[10px] font-black uppercase tracking-[0.18em]
                 outline-none transition-all placeholder-slate-500"
               value={searchQuery}
@@ -1093,8 +1093,8 @@ const Layout: React.FC<LayoutProps> = ({
             </div>
 
             {accountLabel && onSignOut && (
-              <div className="flex items-center gap-2 px-2 sm:px-2.5 py-1.5 rounded-xl border border-white/10 bg-slate-900/80 text-white backdrop-blur-xl shadow-xl min-w-0 max-w-[12.5rem] sm:max-w-[15rem] md:max-w-[18rem]">
-                <div className="hidden md:block min-w-0 truncate text-[10px] font-black uppercase tracking-[0.14em] text-cyan-100">
+              <div className="flex items-center gap-2 px-2 sm:px-2.5 py-1.5 rounded-xl border border-violet-500/15 bg-violet-950/40 text-white backdrop-blur-xl shadow-xl min-w-0 max-w-[12.5rem] sm:max-w-[15rem] md:max-w-[18rem]">
+                <div className="hidden md:block min-w-0 truncate text-[10px] font-black uppercase tracking-[0.14em] text-violet-200">
                   {accountLabel}
                 </div>
                 <button
@@ -3162,7 +3162,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
   ];
 
   const analyticsMetricList = [
-    { key: "transcribe", label: "Transcriptions", accent: "from-indigo-500/80 to-violet-500/60" },
+    { key: "transcribe", label: "Transcriptions", accent: "from-violet-500/80 to-violet-500/60" },
     { key: "analyze", label: "Summaries", accent: "from-emerald-500/80 to-cyan-500/60" },
     { key: "ask", label: "Q&A", accent: "from-fuchsia-500/80 to-pink-500/60" },
     { key: "draftEmail", label: "Email drafts", accent: "from-orange-500/80 to-amber-500/60" },
@@ -3305,7 +3305,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                   <button
                     onClick={() => setView("dashboard")}
                     className={`px-7 sm:px-10 py-3.5 rounded-2xl font-tech-label font-black text-[11px] uppercase tracking-[0.18em] text-white shadow-lg transition active:scale-95 ${isCinematic
-                      ? "bg-gradient-to-r from-sky-500 via-indigo-500 to-fuchsia-500 hover:brightness-110"
+                      ? "bg-gradient-to-r from-sky-500 via-violet-500 to-fuchsia-500 hover:brightness-110"
                       : isMinimal
                         ? "bg-cyan-600 hover:bg-cyan-500"
                         : "app-cta hover:brightness-110"
@@ -3330,7 +3330,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
               <div className="space-y-4 max-[360px]:space-y-3">
                 <div
                   className={`rounded-3xl max-[360px]:rounded-2xl border p-6 max-[360px]:p-4 space-y-5 ${isCinematic
-                    ? "border-violet-300/25 bg-gradient-to-br from-indigo-950/70 via-slate-900/60 to-fuchsia-950/45"
+                    ? "border-violet-300/25 bg-gradient-to-br from-violet-950/70 via-slate-900/60 to-fuchsia-950/45"
                     : isMinimal
                       ? "border-cyan-200/12 bg-slate-950/35"
                       : "border-white/10 bg-slate-900/45"
@@ -3398,7 +3398,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                 setCompletedTranscriptionId(null);
                 setView("details");
               }}
-              className="flex items-center gap-3 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-[0_10px_40px_-10px_rgba(79,70,229,0.8)] border border-indigo-400/30 transition-all font-semibold active:scale-95"
+              className="flex items-center gap-3 px-6 py-3.5 bg-violet-600 hover:bg-violet-500 text-white rounded-full shadow-[0_10px_40px_-10px_rgba(79,70,229,0.8)] border border-violet-400/30 transition-all font-semibold active:scale-95"
             >
               <span className="flex h-3 w-3 relative">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-40"></span>
@@ -3414,12 +3414,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
       {/* AUTO-LISTEN BANNER (MVP) */}
       {autoListenEnabled && autoListenBannerId && nextAutoListenEvent && nextAutoListenEvent.id === autoListenBannerId && (
         <div className="max-w-7xl mx-auto mb-6">
-          <div className="relative overflow-hidden rounded-[2rem] border border-indigo-500/30 bg-indigo-600/10 backdrop-blur-xl p-4 sm:p-5 shadow-xl">
+          <div className="relative overflow-hidden rounded-[2rem] border border-violet-500/30 bg-violet-600/10 backdrop-blur-xl p-4 sm:p-5 shadow-xl">
             <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
               <div className="flex-1">
                 <div className="flex items-center gap-3">
-                  <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.25em] text-indigo-400">
+                  <div className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.25em] text-violet-400">
                     Auto-record armed
                   </span>
                 </div>
@@ -3445,7 +3445,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     }
                   }}
                   disabled={isRecording || isProcessing}
-                  className="px-5 py-3 rounded-2xl bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-indigo-700 transition disabled:opacity-50"
+                  className="px-5 py-3 rounded-2xl bg-violet-600 text-white text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-violet-700 transition disabled:opacity-50"
                 >
                   Start Listening
                 </button>
@@ -3454,7 +3454,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     href={nextAutoListenEvent.joinUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="px-5 py-3 rounded-2xl border border-white/20 bg-white/90 text-indigo-600 text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-white transition"
+                    className="px-5 py-3 rounded-2xl border border-white/20 bg-white/90 text-violet-500 text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-white transition"
                   >
                     Join Meeting
                   </a>
@@ -3479,9 +3479,9 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
         <div className="max-w-7xl mx-auto space-y-10 max-[360px]:space-y-6">
           <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-6">
             <div className="space-y-2 text-left">
-              <h1 className="text-4xl max-[360px]:text-3xl sm:text-5xl md:text-7xl font-black tracking-tighter uppercase">Workspace.</h1>
-              <div className="flex items-center justify-start gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-500">
-                <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></div>
+              <h1 className="font-tech-display text-4xl max-[360px]:text-3xl sm:text-5xl md:text-7xl font-black tracking-tighter">Workspace.</h1>
+              <div className="flex items-center justify-start gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-violet-400">
+                <div className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse"></div>
                 <span>Local storage active</span>
               </div>
             </div>
@@ -3489,7 +3489,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
             <div className="group relative w-full sm:w-auto">
               <button
                 onClick={() => setView("recorder")}
-                className="bg-indigo-600 text-white px-8 max-[360px]:px-5 py-4 max-[360px]:py-3 rounded-2xl font-black text-xs max-[360px]:text-[10px] uppercase tracking-widest shadow-xl hover:bg-indigo-700 transition-all flex items-center justify-center gap-3 w-full"
+                className="bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-8 max-[360px]:px-5 py-4 max-[360px]:py-3 rounded-2xl font-black text-xs max-[360px]:text-[10px] uppercase tracking-widest shadow-[0_12px_32px_-8px_rgba(124,58,237,0.5)] hover:shadow-[0_16px_40px_-8px_rgba(124,58,237,0.6)] hover:scale-[1.02] transition-all flex items-center justify-center gap-3 w-full"
               >
                 <MicIcon className="w-4 h-4" />
                 <span>New Recording</span>
@@ -3502,32 +3502,32 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
             <button
               onClick={() => setWorkspaceTab("personal")}
               className={`p-3 sm:p-0 sm:pb-4 text-left sm:text-center rounded-xl sm:rounded-none text-[10px] sm:text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex items-center justify-between sm:block ${workspaceTab === "personal"
-                ? "text-indigo-500 sm:border-b-2 border-indigo-500 bg-indigo-500/10 sm:bg-transparent"
+                ? "text-violet-400 sm:border-b-2 border-violet-500 bg-violet-500/10 sm:bg-transparent"
                 : "text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100/50 dark:bg-white/5 sm:bg-transparent"
                 }`}
             >
               <span>My Recordings</span>
-              {workspaceTab === "personal" && <span className="sm:hidden text-indigo-500 tracking-[0.2em] text-[8px]">ACTIVE</span>}
+              {workspaceTab === "personal" && <span className="sm:hidden text-violet-400 tracking-[0.2em] text-[8px]">ACTIVE</span>}
             </button>
             <button
               onClick={() => setWorkspaceTab("cloud")}
               className={`p-3 sm:p-0 sm:pb-4 text-left sm:text-center rounded-xl sm:rounded-none text-[10px] sm:text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex items-center justify-between sm:block ${workspaceTab === "cloud"
-                ? "text-indigo-500 sm:border-b-2 border-indigo-500 bg-indigo-500/10 sm:bg-transparent"
+                ? "text-violet-400 sm:border-b-2 border-violet-500 bg-violet-500/10 sm:bg-transparent"
                 : "text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100/50 dark:bg-white/5 sm:bg-transparent"
                 }`}
             >
               <span>Cloud Backup</span>
-              {workspaceTab === "cloud" && <span className="sm:hidden text-indigo-500 tracking-[0.2em] text-[8px]">ACTIVE</span>}
+              {workspaceTab === "cloud" && <span className="sm:hidden text-violet-400 tracking-[0.2em] text-[8px]">ACTIVE</span>}
             </button>
             <button
               onClick={() => setWorkspaceTab("enterprise")}
               className={`p-3 sm:p-0 sm:pb-4 text-left sm:text-center rounded-xl sm:rounded-none text-[10px] sm:text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex items-center justify-between sm:block ${workspaceTab === "enterprise"
-                ? "text-indigo-500 sm:border-b-2 border-indigo-500 bg-indigo-500/10 sm:bg-transparent"
+                ? "text-violet-400 sm:border-b-2 border-violet-500 bg-violet-500/10 sm:bg-transparent"
                 : "text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100/50 dark:bg-white/5 sm:bg-transparent"
                 }`}
             >
               <span>Team Feed</span>
-              {workspaceTab === "enterprise" && <span className="sm:hidden text-indigo-500 tracking-[0.2em] text-[8px]">ACTIVE</span>}
+              {workspaceTab === "enterprise" && <span className="sm:hidden text-violet-400 tracking-[0.2em] text-[8px]">ACTIVE</span>}
             </button>
           </nav>
 
@@ -3541,10 +3541,10 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                       setSelectedMeetingId(m.id);
                       setView("details");
                     }}
-                    className="p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 hover:border-indigo-500/50 hover:bg-slate-50 dark:hover:bg-white/[0.06] transition-all cursor-pointer shadow-xl relative group"
+                    className="p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 hover:border-violet-500/50 hover:bg-slate-50 dark:hover:bg-white/[0.06] transition-all cursor-pointer shadow-xl relative group"
                   >
                     <div className="flex justify-between items-start mb-5">
-                      <span className="px-3 py-1.5 bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 rounded-xl text-[8px] font-black uppercase tracking-widest">
+                      <span className="px-3 py-1.5 bg-violet-600/10 text-violet-400 border border-violet-500/20 rounded-xl text-[8px] font-black uppercase tracking-widest">
                         {m.type}
                       </span>
                       <div className="flex items-center gap-2">
@@ -3573,7 +3573,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
 
                     <div className="mt-7 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-slate-500 border-t border-slate-200 dark:border-white/5 pt-5">
                       <div className="flex items-center">
-                        <PlayIcon className="mr-3 w-4 h-4 text-indigo-600" />
+                        <PlayIcon className="mr-3 w-4 h-4 text-violet-500" />
                         {formatTime(m.duration)}
                       </div>
                       {m.syncStatus === "failed" ? (
@@ -3638,7 +3638,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                               showToast("Failed to transcribe offline meeting.", "info");
                             }
                           }}
-                          className="px-3 py-1.5 bg-indigo-500 rounded-xl text-white text-[9px] font-black uppercase tracking-widest hover:bg-indigo-600 shadow-md transition-colors"
+                          className="px-3 py-1.5 bg-violet-500 rounded-xl text-white text-[9px] font-black uppercase tracking-widest hover:bg-violet-600 shadow-md transition-colors"
                         >
                           Push to Transcribe
                         </button>
@@ -3648,7 +3648,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                             e.stopPropagation();
                             syncToCloud(m.id);
                           }}
-                          className="p-2 hover:text-indigo-400 flex items-center gap-2"
+                          className="p-2 hover:text-violet-400 flex items-center gap-2"
                         >
                           {m.syncStatus === "syncing" ? (
                             <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
@@ -3677,29 +3677,29 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                       setSelectedMeetingId(m.id);
                       setView("details");
                     }}
-                    className="p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-indigo-600/5 border border-indigo-500/30 hover:bg-indigo-600/10 transition-all cursor-pointer shadow-2xl relative group"
+                    className="p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-violet-600/5 border border-violet-500/30 hover:bg-violet-600/10 transition-all cursor-pointer shadow-2xl relative group"
                   >
                     <div className="flex justify-between items-start mb-5">
-                      <span className="px-3 py-1.5 bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 rounded-xl text-[8px] font-black uppercase tracking-widest">
+                      <span className="px-3 py-1.5 bg-violet-600/10 text-violet-400 border border-violet-500/20 rounded-xl text-[8px] font-black uppercase tracking-widest">
                         {m.type}
                       </span>
-                      <span className="text-indigo-500 dark:text-indigo-400 text-[9px] font-black uppercase tracking-widest">
+                      <span className="text-violet-400 dark:text-violet-400 text-[9px] font-black uppercase tracking-widest">
                         CLOUD
                       </span>
                     </div>
 
-                    <h3 className="text-lg md:text-xl font-black text-indigo-900 dark:text-indigo-100 line-clamp-2 leading-tight">
+                    <h3 className="text-lg md:text-xl font-black text-violet-900 dark:text-violet-100 line-clamp-2 leading-tight">
                       {m.title}
                     </h3>
 
-                    <div className="mt-3 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-indigo-400/70">
+                    <div className="mt-3 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-violet-400/70">
                       <span>{formatRecordedAt(m.date)}</span>
                       <span>{formatDurationHMS(m.duration)}</span>
                     </div>
 
-                    <div className="mt-7 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-indigo-400/70 border-t border-slate-200 dark:border-white/5 pt-5">
+                    <div className="mt-7 flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-violet-400/70 border-t border-slate-200 dark:border-white/5 pt-5">
                       <div className="flex items-center">
-                        <PlayIcon className="mr-3 w-4 h-4 text-indigo-600" />
+                        <PlayIcon className="mr-3 w-4 h-4 text-violet-500" />
                         {formatTime(m.duration)}
                       </div>
                       <span className="flex items-center gap-2">
@@ -3725,7 +3725,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     placeholder="Search team feed..."
                     value={teamFeedFilter}
                     onChange={(e) => setTeamFeedFilter(e.target.value)}
-                    className="flex-1 min-w-[180px] h-9 px-4 bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl text-[11px] font-bold placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                    className="flex-1 min-w-[180px] h-9 px-4 bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl text-[11px] font-bold placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500/40"
                   />
                   {(["all", "today", "week", "month"] as const).map((range) => (
                     <button
@@ -3733,8 +3733,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                       onClick={() => setTeamFeedDateRange(range)}
                       className={`h-9 px-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${
                         teamFeedDateRange === range
-                          ? "bg-indigo-600 text-white border-indigo-600"
-                          : "bg-white dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-500 hover:text-indigo-500"
+                          ? "bg-violet-600 text-white border-violet-600"
+                          : "bg-white dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-500 hover:text-violet-400"
                       }`}
                     >
                       {range === "all" ? "All" : range === "today" ? "Today" : range === "week" ? "This Week" : "This Month"}
@@ -3745,12 +3745,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                 {/* Team insights bar */}
                 {teamFeedMeetings.length > 0 && (
                   <div className="col-span-full grid grid-cols-3 gap-3 mb-2">
-                    <div className="p-4 rounded-2xl bg-indigo-600/5 border border-indigo-500/10 text-center">
-                      <p className="text-2xl font-black text-indigo-500">{teamFeedMeetings.length}</p>
+                    <div className="p-4 rounded-2xl bg-violet-600/5 border border-violet-500/10 text-center">
+                      <p className="text-2xl font-black text-violet-400">{teamFeedMeetings.length}</p>
                       <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 mt-1">Total Meetings</p>
                     </div>
-                    <div className="p-4 rounded-2xl bg-indigo-600/5 border border-indigo-500/10 text-center">
-                      <p className="text-2xl font-black text-indigo-500">
+                    <div className="p-4 rounded-2xl bg-violet-600/5 border border-violet-500/10 text-center">
+                      <p className="text-2xl font-black text-violet-400">
                         {teamFeedMeetings.filter((m) => {
                           const d = new Date(m.date);
                           const now = new Date();
@@ -3761,8 +3761,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                       </p>
                       <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 mt-1">This Week</p>
                     </div>
-                    <div className="p-4 rounded-2xl bg-indigo-600/5 border border-indigo-500/10 text-center">
-                      <p className="text-2xl font-black text-indigo-500">
+                    <div className="p-4 rounded-2xl bg-violet-600/5 border border-violet-500/10 text-center">
+                      <p className="text-2xl font-black text-violet-400">
                         {Math.round(teamFeedMeetings.reduce((a, m) => a + m.duration, 0) / 60)}m
                       </p>
                       <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 mt-1">Total Duration</p>
@@ -3780,14 +3780,14 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     >
                       <div className="space-y-3">
                         <div className="flex justify-between items-start">
-                          <span className="px-3 py-1 bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 rounded-lg text-[9px] font-black uppercase tracking-widest">
+                          <span className="px-3 py-1 bg-violet-600/10 text-violet-400 border border-violet-500/20 rounded-lg text-[9px] font-black uppercase tracking-widest">
                             {m.type}
                           </span>
                           <span className="text-slate-400 dark:text-slate-600 text-[9px] font-black uppercase tracking-widest">
                             {formatRecordedAt(m.date)}
                           </span>
                         </div>
-                        <h3 className="text-lg md:text-xl font-black group-hover:text-indigo-500 transition-colors leading-tight line-clamp-2">
+                        <h3 className="text-lg md:text-xl font-black group-hover:text-violet-400 transition-colors leading-tight line-clamp-2">
                           {m.title}
                         </h3>
                       </div>
@@ -3796,8 +3796,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                           {m.sharedBy ? `Shared by ${m.sharedBy.slice(0, 8)}...` : ""}
                         </p>
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center text-[10px] font-black uppercase tracking-widest text-indigo-500/80">
-                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mr-2 animate-pulse" />
+                          <div className="flex items-center text-[10px] font-black uppercase tracking-widest text-violet-400/80">
+                            <div className="w-1.5 h-1.5 rounded-full bg-violet-500 mr-2 animate-pulse" />
                             {m.teamStatus || (m.transcript?.length ? "Transcribed" : "Recorded")}
                           </div>
                           <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
@@ -3885,7 +3885,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                 <span className="text-[10px] font-black text-cyan-300">{processingProgressPercent}%</span>
               </div>
               <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                <div className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-indigo-500 transition-all duration-500"
+                <div className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-violet-500 transition-all duration-500"
                   style={{ width: `${processingProgressPercent}%` }} />
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -3905,7 +3905,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
           <div className="w-full grid grid-cols-1 md:grid-cols-[1fr_1.1fr] gap-3">
 
             {/* LEFT: Hero stage (record + controls) */}
-            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950/60 border border-white/[0.07] shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] p-5 flex flex-col items-center justify-between gap-4">
+            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-violet-950/50 border border-violet-500/[0.07] shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] p-5 flex flex-col items-center justify-between gap-4">
 
               {/* ambient glow while recording */}
               <div className={`pointer-events-none absolute inset-0 transition-opacity duration-700 ${isRecording ? "opacity-100" : "opacity-0"}`}>
@@ -3927,7 +3927,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                   <button onClick={startRecording} disabled={isProcessing}
                     className={`group relative w-32 h-32 md:w-36 md:h-36 rounded-3xl flex flex-col items-center justify-center gap-2 text-white transition-all duration-200 ${isProcessing
                       ? "bg-slate-800/60 cursor-not-allowed opacity-50"
-                      : "bg-gradient-to-br from-indigo-500 via-violet-600 to-purple-700 shadow-[0_0_60px_rgba(99,102,241,0.4)] hover:shadow-[0_0_90px_rgba(99,102,241,0.65)] hover:scale-[1.04] active:scale-95"
+                      : "bg-gradient-to-br from-violet-500 via-violet-600 to-purple-700 shadow-[0_0_60px_rgba(99,102,241,0.4)] hover:shadow-[0_0_90px_rgba(99,102,241,0.65)] hover:scale-[1.04] active:scale-95"
                       }`}
                     title={isProcessing ? "Processing…" : "Start recording"}>
                     {!isProcessing && <div className="absolute inset-0 rounded-3xl border-2 border-white/10 pointer-events-none" />}
@@ -3947,7 +3947,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                   {/* Interim — current spoken words */}
                   <div className="flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
-                    <p className="text-[11px] font-semibold bg-gradient-to-r from-white to-indigo-300 bg-clip-text text-transparent leading-relaxed truncate">
+                    <p className="text-[11px] font-semibold bg-gradient-to-r from-white to-violet-300 bg-clip-text text-transparent leading-relaxed truncate">
                       {interimCaption || (finalCaptions.length === 0 ? "Listening…" : "")}
                     </p>
                   </div>
@@ -3976,7 +3976,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     }} />
                   </label>
                   <span className="text-slate-600 text-[8px] font-black uppercase tracking-widest shrink-0">or</span>
-                  <label className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.07] text-indigo-300 text-[9px] font-black uppercase tracking-widest cursor-pointer transition-all ${isProcessing ? "opacity-30 pointer-events-none" : "hover:bg-indigo-500/15 hover:text-indigo-100 hover:border-indigo-400/50"}`}>
+                  <label className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-violet-500/30 bg-violet-500/[0.07] text-violet-300 text-[9px] font-black uppercase tracking-widest cursor-pointer transition-all ${isProcessing ? "opacity-30 pointer-events-none" : "hover:bg-violet-500/15 hover:text-violet-100 hover:border-violet-400/50"}`}>
                     <span>⚡</span><span>Transcribe</span>
                     <input type="file" accept="audio/*,video/*" hidden onChange={async (e) => {
                       const file = e.target.files?.[0]; if (!file) return;
@@ -4002,7 +4002,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     disabled={diagnosticsLoading || isRecording || isProcessing}
                     className={`h-7 px-3 rounded-lg text-[9px] font-black uppercase tracking-[0.18em] transition-all ${diagnosticsEnabled
                       ? "bg-rose-600/80 hover:bg-rose-600 text-white"
-                      : "bg-indigo-600/70 hover:bg-indigo-600 text-white"
+                      : "bg-violet-600/70 hover:bg-violet-600 text-white"
                       } disabled:opacity-40 disabled:cursor-not-allowed`}>
                     {diagnosticsLoading ? "…" : diagnosticsEnabled ? "Stop" : "Test mic"}
                   </button>
@@ -4078,7 +4078,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                       <label className="text-[8px] font-black uppercase tracking-widest text-slate-500">Mic</label>
                     </div>
                     <button type="button" onClick={() => void refreshAudioInputs()}
-                      className="text-[10px] font-black text-indigo-500 hover:text-indigo-400 transition">↺</button>
+                      className="text-[10px] font-black text-violet-400 hover:text-violet-400 transition">↺</button>
                   </div>
                   <select value={selectedMicDeviceId} onChange={(e) => setSelectedMicDeviceId(e.target.value)}
                     className="w-full bg-slate-900 text-white border-none text-[10px] font-black uppercase tracking-widest outline-none cursor-pointer truncate rounded-md">
@@ -4113,11 +4113,11 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                       <span className="text-xs">🎚️</span>
                       <label className="text-[8px] font-black uppercase tracking-widest text-slate-500">Gate</label>
                     </div>
-                    <span className="text-[9px] font-black text-indigo-400">{gateSensitivity}%</span>
+                    <span className="text-[9px] font-black text-violet-400">{gateSensitivity}%</span>
                   </div>
                   <input type="range" min="0" max="100" value={gateSensitivity}
                     onChange={(e) => setGateSensitivity(parseInt(e.target.value, 10))}
-                    className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
+                    className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-violet-500" />
                 </div>
               </div>
             </div>
@@ -4135,7 +4135,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
           <div className="flex-1 space-y-6">
             <button
               onClick={() => setView("dashboard")}
-              className="text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-indigo-500 transition-colors"
+              className="text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-violet-400 transition-colors"
             >
               ← Back to Workspace
             </button>
@@ -4166,7 +4166,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     a.click();
                     URL.revokeObjectURL(url);
                   }}
-                  className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600/10 border border-indigo-500/30 text-indigo-400 text-[9px] font-black uppercase tracking-widest hover:bg-indigo-600/20 transition-all"
+                  className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-xl bg-violet-600/10 border border-violet-500/30 text-violet-400 text-[9px] font-black uppercase tracking-widest hover:bg-violet-600/20 transition-all"
                   title="Export transcript as text file"
                 >
                   <span>⬇</span> Export
@@ -4174,7 +4174,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
               </div>
 
               <div className="flex items-center gap-3 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                <span className="px-3 py-1.5 rounded-xl bg-indigo-600/10 text-indigo-400 border border-indigo-500/20">
+                <span className="px-3 py-1.5 rounded-xl bg-violet-600/10 text-violet-400 border border-violet-500/20">
                   {selectedMeeting.type}
                 </span>
                 <span>•</span>
@@ -4191,7 +4191,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                 const entries = Object.entries(speakerMap).filter(([, d]) => d > 0);
                 if (entries.length < 2) return null;
                 const total = entries.reduce((s, [, d]) => s + d, 0);
-                const colors = ['bg-indigo-500', 'bg-emerald-500', 'bg-amber-500', 'bg-fuchsia-500', 'bg-cyan-500', 'bg-rose-500'];
+                const colors = ['bg-violet-500', 'bg-emerald-500', 'bg-amber-500', 'bg-fuchsia-500', 'bg-cyan-500', 'bg-rose-500'];
                 return (
                   <div className="space-y-3">
                     <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Speaker Breakdown</p>
@@ -4218,22 +4218,22 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
               })()}
 
               <div className="space-y-4 max-h-[520px] overflow-y-auto pr-4">
-                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Transcript <span className="text-indigo-400 normal-case font-semibold">(click any line to edit)</span></p>
+                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Transcript <span className="text-violet-400 normal-case font-semibold">(click any line to edit)</span></p>
                 {selectedMeeting.transcript.length ? (
                   selectedMeeting.transcript.map((s) => (
                     <div
                       key={s.id}
-                      className="p-5 rounded-[1.75rem] bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 hover:bg-indigo-500/5 transition-all group"
+                      className="p-5 rounded-[1.75rem] bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 hover:bg-violet-500/5 transition-all group"
                     >
                       <div className="flex justify-between items-center mb-2">
-                        <span className="text-[10px] font-black uppercase text-indigo-500 tracking-widest">{s.speaker}</span>
+                        <span className="text-[10px] font-black uppercase text-violet-400 tracking-widest">{s.speaker}</span>
                         <span className="text-[9px] font-mono text-slate-500">[{formatTime(s.startTime)}]</span>
                       </div>
                       <textarea
                         key={`${s.id}_${s.text.length}`}
                         defaultValue={s.text}
                         rows={Math.max(1, Math.ceil(s.text.length / 80))}
-                        className="w-full bg-transparent text-sm md:text-base font-medium text-slate-700 dark:text-slate-300 leading-relaxed outline-none resize-none border-0 border-b border-transparent focus:border-indigo-400 transition-colors"
+                        className="w-full bg-transparent text-sm md:text-base font-medium text-slate-700 dark:text-slate-300 leading-relaxed outline-none resize-none border-0 border-b border-transparent focus:border-violet-400 transition-colors"
                         onBlur={(e) => {
                           const newText = e.target.value;
                           if (newText === s.text) return;
@@ -4253,12 +4253,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
           </div>
 
           <div className="w-full lg:w-[400px] space-y-6">
-            <div className="p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-indigo-600/10 border border-indigo-500/20 space-y-6 max-[360px]:space-y-4 shadow-2xl">
+            <div className="p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-violet-600/10 border border-violet-500/20 space-y-6 max-[360px]:space-y-4 shadow-2xl">
               <div className="flex justify-between items-center">
                 <h3 className="text-xl font-black tracking-tighter">Summary.</h3>
                 <span
                   className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${selectedMeeting.syncStatus === "cloud"
-                    ? "bg-indigo-600 text-white"
+                    ? "bg-violet-600 text-white"
                     : "bg-slate-300 dark:bg-slate-500/20 text-slate-700 dark:text-slate-400"
                     }`}
                 >
@@ -4269,7 +4269,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
               <ul className="space-y-3">
                 {(selectedMeeting.summary?.executiveSummary || ["Summary not available."]).slice(0, 6).map((s, i) => (
                   <li key={i} className="text-sm font-bold text-slate-700 dark:text-slate-300 leading-relaxed flex items-start">
-                    <div className="w-2 h-2 rounded-full bg-indigo-500 mt-1.5 mr-3 flex-shrink-0"></div>
+                    <div className="w-2 h-2 rounded-full bg-violet-500 mt-1.5 mr-3 flex-shrink-0"></div>
                     {s}
                   </li>
                 ))}
@@ -4279,7 +4279,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                 <button
                   onClick={playRecap}
                   disabled={recapLoading || recapCoolingDown}
-                  className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all disabled:opacity-50"
+                  className="w-full py-4 bg-violet-600 hover:bg-violet-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl active:scale-95 transition-all disabled:opacity-50"
                 >
                   {recapLoading
                     ? "AI brief processing..."
@@ -4334,7 +4334,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                         document.body.removeChild(a);
                         showToast("Brief downloaded");
                       }}
-                      className="px-4 py-2 rounded-2xl border border-indigo-400/30 bg-indigo-500/10 text-indigo-400 font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500/20 transition-all"
+                      className="px-4 py-2 rounded-2xl border border-violet-400/30 bg-violet-500/10 text-violet-400 font-black text-[10px] uppercase tracking-widest hover:bg-violet-500/20 transition-all"
                     >
                       Download
                     </button>
@@ -4351,7 +4351,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                             if ((err as Error)?.name !== "AbortError") showToast("Share cancelled", "info");
                           }
                         }}
-                        className="px-4 py-2 rounded-2xl border border-indigo-400/30 bg-indigo-500/10 text-indigo-400 font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500/20 transition-all"
+                        className="px-4 py-2 rounded-2xl border border-violet-400/30 bg-violet-500/10 text-violet-400 font-black text-[10px] uppercase tracking-widest hover:bg-violet-500/20 transition-all"
                       >
                         Share
                       </button>
@@ -4370,7 +4370,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
 
             <div className="p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 space-y-3 shadow-lg">
               <button
-                className="w-full p-4 text-left text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-white hover:bg-indigo-50 dark:hover:bg-white/5 rounded-2xl transition-all"
+                className="w-full p-4 text-left text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-violet-500 dark:hover:text-white hover:bg-violet-50 dark:hover:bg-white/5 rounded-2xl transition-all"
                 onClick={async () => {
                   try {
                     const draft = await generateEmailDraft(selectedMeeting);
@@ -4385,14 +4385,14 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
               </button>
 
               <button
-                className="w-full p-4 text-left text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-white hover:bg-indigo-50 dark:hover:bg-white/5 rounded-2xl transition-all"
+                className="w-full p-4 text-left text-[11px] font-black uppercase tracking-widest text-slate-600 dark:text-slate-400 hover:text-violet-500 dark:hover:text-white hover:bg-violet-50 dark:hover:bg-white/5 rounded-2xl transition-all"
                 onClick={() => downloadAudio(selectedMeeting)}
               >
                 Download Audio
               </button>
 
               <button
-                className="w-full p-4 text-left text-[11px] font-black uppercase tracking-widest text-indigo-600 hover:text-white hover:bg-indigo-600 dark:hover:bg-indigo-600/20 rounded-2xl transition-all"
+                className="w-full p-4 text-left text-[11px] font-black uppercase tracking-widest text-violet-500 hover:text-white hover:bg-violet-600 dark:hover:bg-violet-600/20 rounded-2xl transition-all"
                 onClick={() => syncToCloud(selectedMeeting.id)}
               >
                 Backup to Cloud
@@ -4428,7 +4428,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
 
           <div className="space-y-4 md:space-y-5">
             <div className="flex flex-col gap-1">
-              <p className="font-tech-label text-[9px] font-black uppercase tracking-[0.32em] text-indigo-500">Calendar connectors</p>
+              <p className="font-tech-label text-[9px] font-black uppercase tracking-[0.32em] text-violet-400">Calendar connectors</p>
               <p className="text-sm md:text-[15px] text-slate-300 font-semibold max-w-3xl">
                 Keep Auto-Record armed by authorizing Google or Microsoft calendars. We only read upcoming meetings.
               </p>
@@ -4461,7 +4461,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     onClick={() => startOAuth(provider.id as "google" | "microsoft")}
                     className={`w-full py-3 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all ${provider.connected
                       ? "bg-gradient-to-r from-slate-800 to-slate-950 text-white shadow-lg"
-                      : "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-xl hover:from-indigo-600 hover:to-purple-600"
+                      : "bg-gradient-to-r from-violet-500 to-purple-500 text-white shadow-xl hover:from-violet-600 hover:to-purple-600"
                       }`}
                   >
                     {provider.connected ? "Refresh connection" : "Connect"}
@@ -4499,7 +4499,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                   }}
                   className={`w-full py-3 rounded-xl font-tech-label font-black text-[10px] uppercase tracking-[0.2em] transition-all ${int.connected
                     ? "bg-slate-900 text-white shadow-lg border border-white/10"
-                    : "bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-xl hover:from-indigo-600 hover:to-purple-600"
+                    : "bg-gradient-to-r from-violet-500 to-purple-500 text-white shadow-xl hover:from-violet-600 hover:to-purple-600"
                     }`}
                 >
                   {int.connected ? "Disconnect" : "Connect Link"}
@@ -4538,9 +4538,9 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     <li
                       key={item}
                       onClick={() => setActiveArticle(HELP_ARTICLES[item] || null)}
-                      className="group relative text-slate-500 dark:text-slate-400 font-bold hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer text-sm flex items-center"
+                      className="group relative text-slate-500 dark:text-slate-400 font-bold hover:text-violet-500 dark:hover:text-violet-400 transition-colors cursor-pointer text-sm flex items-center"
                     >
-                      <span className="mr-3 text-indigo-500">→</span>
+                      <span className="mr-3 text-violet-400">→</span>
                       {item}
                       <Tooltip text="Read" />
                     </li>
@@ -4550,14 +4550,14 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
             ))}
           </div>
 
-          <div className="p-10 max-[360px]:p-5 md:p-12 rounded-[3rem] max-[360px]:rounded-2xl bg-indigo-600 flex flex-col md:flex-row items-center justify-between gap-8 max-[360px]:gap-4 text-white shadow-2xl">
+          <div className="p-10 max-[360px]:p-5 md:p-12 rounded-[3rem] max-[360px]:rounded-2xl bg-violet-600 flex flex-col md:flex-row items-center justify-between gap-8 max-[360px]:gap-4 text-white shadow-2xl">
             <div className="space-y-3 max-w-lg text-center md:text-left">
               <h2 className="font-tech-display text-3xl max-[360px]:text-2xl md:text-4xl font-black tracking-tighter">Neural Support.</h2>
               <p className="text-base font-bold opacity-80">Ask anything about the app and workflow.</p>
             </div>
             <button
               onClick={() => setIsSupportOpen(true)}
-              className="bg-white text-indigo-600 px-8 max-[360px]:px-5 py-4 max-[360px]:py-3 rounded-full font-black text-base max-[360px]:text-sm shadow-2xl hover:scale-105 active:scale-95 transition-all"
+              className="bg-white text-violet-500 px-8 max-[360px]:px-5 py-4 max-[360px]:py-3 rounded-full font-black text-base max-[360px]:text-sm shadow-2xl hover:scale-105 active:scale-95 transition-all"
             >
               Engage AI Support
             </button>
@@ -4570,7 +4570,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
         <div className="max-w-6xl mx-auto space-y-6 md:space-y-8">
           <div className="overflow-hidden rounded-3xl md:rounded-[2.5rem] bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 border border-white/10 shadow-[0_55px_110px_-50px_rgba(15,23,42,0.95)] p-5 sm:p-6 md:p-8 space-y-6 md:space-y-7">
             <div className="space-y-2 max-w-2xl">
-              <p className="font-tech-label text-[9px] font-black uppercase tracking-[0.3em] text-indigo-400">Neural insights</p>
+              <p className="font-tech-label text-[9px] font-black uppercase tracking-[0.3em] text-violet-400">Neural insights</p>
               <h1 className="font-tech-display text-4xl max-[360px]:text-3xl sm:text-5xl md:text-6xl font-black uppercase tracking-tight text-white">Analytics.</h1>
               <p className="text-slate-300 text-sm md:text-[15px]">
                 Deep metrics for every transcript, summary, and auto-listen engagement. Refresh to pull the latest backend telemetry.
@@ -4597,12 +4597,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
           <div className="space-y-4 md:space-y-5">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="font-tech-label text-[9px] font-black uppercase tracking-[0.3em] text-indigo-500">Backend telemetry</p>
+                <p className="font-tech-label text-[9px] font-black uppercase tracking-[0.3em] text-violet-400">Backend telemetry</p>
                 <h2 className="font-tech-display text-2xl md:text-3xl font-black text-white">Gemini & Auto-Record</h2>
               </div>
               <button
                 onClick={() => fetchAnalytics()}
-                className="w-full sm:w-auto px-4 py-2 rounded-full border border-indigo-500 text-indigo-500 font-tech-label text-[9px] font-black uppercase tracking-[0.22em] transition hover:bg-indigo-500 hover:text-white"
+                className="w-full sm:w-auto px-4 py-2 rounded-full border border-violet-500 text-violet-400 font-tech-label text-[9px] font-black uppercase tracking-[0.22em] transition hover:bg-violet-500 hover:text-white"
               >
                 Refresh
               </button>
@@ -4644,8 +4644,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                   })}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
-                  <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-indigo-600/40 to-purple-600/30 p-4 md:p-5 shadow-2xl space-y-1.5">
-                    <p className="font-tech-label text-[8px] font-black uppercase tracking-[0.24em] text-indigo-100">Calendar syncs</p>
+                  <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-violet-600/40 to-purple-600/30 p-4 md:p-5 shadow-2xl space-y-1.5">
+                    <p className="font-tech-label text-[8px] font-black uppercase tracking-[0.24em] text-violet-100">Calendar syncs</p>
                     <p className="font-tech-display text-3xl md:text-4xl font-black text-white leading-none">{analyticsMetrics?.autoListen.calendarSyncs ?? 0}</p>
                     <p className="font-tech-label text-[9px] uppercase tracking-[0.18em] text-white/70">
                       Errors: {analyticsMetrics?.autoListen.calendarErrors ?? 0}
@@ -4682,7 +4682,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
 
           <div className="p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/5 space-y-8 max-[360px]:space-y-5 shadow-xl">
             <div className="space-y-4">
-              <h3 className="text-[10px] font-black uppercase text-indigo-500 tracking-widest border-b border-slate-200 dark:border-white/5 pb-3">
+              <h3 className="text-[10px] font-black uppercase text-violet-400 tracking-widest border-b border-slate-200 dark:border-white/5 pb-3">
                 Recording Defaults
               </h3>
 
@@ -4692,7 +4692,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                   <select
                     value={accentMode}
                     onChange={(e) => setAccentMode(e.target.value as any)}
-                    className="w-full bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white border-none rounded-2xl p-4 text-[11px] font-black uppercase tracking-widest outline-none focus:ring-1 ring-indigo-500"
+                    className="w-full bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white border-none rounded-2xl p-4 text-[11px] font-black uppercase tracking-widest outline-none focus:ring-1 ring-violet-500"
                   >
                     <option value="standard">Standard</option>
                     <option value="uk">UK English</option>
@@ -4714,7 +4714,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                       max="100"
                       value={gateSensitivity}
                       onChange={(e) => setGateSensitivity(parseInt(e.target.value, 10))}
-                      className="w-full h-1 bg-slate-300 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                      className="w-full h-1 bg-slate-300 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-violet-500"
                     />
                   </div>
                 </div>
@@ -4722,7 +4722,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
             </div>
 
             <div className="space-y-4">
-              <h3 className="text-[10px] font-black uppercase text-indigo-500 tracking-widest border-b border-slate-200 dark:border-white/5 pb-3">
+              <h3 className="text-[10px] font-black uppercase text-violet-400 tracking-widest border-b border-slate-200 dark:border-white/5 pb-3">
                 Auto-Record
               </h3>
 
@@ -4742,7 +4742,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     <button
                       onClick={() => setAutoListenEnabled((v) => !v)}
                       className={`w-14 h-8 rounded-full border transition-all relative ${autoListenEnabled
-                        ? "bg-indigo-600 border-indigo-500"
+                        ? "bg-violet-600 border-violet-500"
                         : "bg-slate-200 dark:bg-white/10 border-slate-300 dark:border-white/10"
                         }`}
                       aria-pressed={autoListenEnabled}
@@ -4778,7 +4778,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     max={10}
                     value={autoListenLeadMinutes}
                     onChange={(e) => setAutoListenLeadMinutes(parseInt(e.target.value, 10))}
-                    className="w-full h-1 bg-slate-300 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                    className="w-full h-1 bg-slate-300 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-violet-500"
                   />
                   <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
                     We’ll nudge you when a meeting starts soon.
@@ -4800,7 +4800,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
 
               <button
                 onClick={() => showToast("Changes Saved")}
-                className="bg-indigo-600 text-white px-10 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl hover:bg-indigo-700"
+                className="bg-violet-600 text-white px-10 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl hover:bg-violet-700"
               >
                 Save Protocol
               </button>
@@ -4813,14 +4813,14 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
       {activeArticle && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md">
           <div className="max-w-xl w-full p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-3xl space-y-5 relative">
-            <button onClick={() => setActiveArticle(null)} className="absolute top-6 right-7 text-slate-500 hover:text-indigo-500 font-black">
+            <button onClick={() => setActiveArticle(null)} className="absolute top-6 right-7 text-slate-500 hover:text-violet-400 font-black">
               ✕
             </button>
-            <h2 className="text-2xl font-black text-indigo-500">{activeArticle.title}</h2>
+            <h2 className="text-2xl font-black text-violet-400">{activeArticle.title}</h2>
             <p className="text-base leading-relaxed text-slate-700 dark:text-slate-300 font-medium">{activeArticle.content}</p>
             <button
               onClick={() => setActiveArticle(null)}
-              className="bg-indigo-600 text-white px-7 py-3 rounded-xl font-black text-xs uppercase tracking-widest"
+              className="bg-violet-600 text-white px-7 py-3 rounded-xl font-black text-xs uppercase tracking-widest"
             >
               Acknowledge
             </button>
@@ -4833,12 +4833,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
           <div className="max-w-xl w-full max-h-[80vh] overflow-y-auto p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-3xl space-y-5 relative">
             <button
               onClick={() => setEnterpriseDetail(null)}
-              className="absolute top-6 right-7 text-slate-500 hover:text-indigo-500 font-black"
+              className="absolute top-6 right-7 text-slate-500 hover:text-violet-400 font-black"
             >
               ✕
             </button>
             <div className="space-y-1">
-              <p className="text-[10px] font-black uppercase text-indigo-500">{enterpriseDetail.type} &middot; {formatRecordedAt(enterpriseDetail.date)}</p>
+              <p className="text-[10px] font-black uppercase text-violet-400">{enterpriseDetail.type} &middot; {formatRecordedAt(enterpriseDetail.date)}</p>
               <h2 className="text-2xl font-black">{enterpriseDetail.title}</h2>
               <p className="text-[10px] font-bold text-slate-500">{formatTime(enterpriseDetail.duration)} &middot; Shared by {enterpriseDetail.sharedBy?.slice(0, 12) || "team member"}</p>
             </div>
@@ -4847,7 +4847,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
               <div className="space-y-4">
                 {(enterpriseDetail.summary as AISummary).executiveSummary?.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-2">Summary</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-violet-400 mb-2">Summary</p>
                     <ul className="space-y-1">
                       {(enterpriseDetail.summary as AISummary).executiveSummary.map((s, i) => (
                         <li key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 font-medium">- {s}</li>
@@ -4857,7 +4857,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                 )}
                 {(enterpriseDetail.summary as AISummary).actionItems?.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-2">Action Items</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-violet-400 mb-2">Action Items</p>
                     <ul className="space-y-1">
                       {(enterpriseDetail.summary as AISummary).actionItems.map((a, i) => (
                         <li key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 font-medium">{"\u2610"} {a}</li>
@@ -4867,7 +4867,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                 )}
                 {(enterpriseDetail.summary as AISummary).decisions?.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-2">Decisions</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-violet-400 mb-2">Decisions</p>
                     <ul className="space-y-1">
                       {(enterpriseDetail.summary as AISummary).decisions.map((d, i) => (
                         <li key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 font-medium">{"\u2713"} {d}</li>
@@ -4885,8 +4885,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
             )}
 
             <div className="flex items-center gap-3">
-              <div className="flex-1 bg-indigo-600/10 p-4 rounded-2xl flex items-center gap-3">
-                <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+              <div className="flex-1 bg-violet-600/10 p-4 rounded-2xl flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
                 <span className="text-[10px] font-black uppercase">{enterpriseDetail.teamStatus || "Shared"}</span>
               </div>
               <button
@@ -4908,7 +4908,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
           <div className="max-w-3xl w-full h-[75vh] max-[360px]:h-[80vh] flex flex-col p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-3xl relative">
             <button
               onClick={() => setIsSupportOpen(false)}
-              className="absolute top-6 right-7 text-slate-500 hover:text-indigo-500 font-black"
+              className="absolute top-6 right-7 text-slate-500 hover:text-violet-400 font-black"
             >
               ✕
             </button>
@@ -4920,7 +4920,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                 <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                   <div
                     className={`max-w-[85%] p-4 rounded-2xl ${m.role === "user"
-                      ? "bg-indigo-600 text-white"
+                      ? "bg-violet-600 text-white"
                       : "bg-slate-100 dark:bg-white/5 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/10"
                       }`}
                   >
@@ -4941,7 +4941,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
               />
               <button
                 onClick={handleSupportSend}
-                className="bg-indigo-600 px-6 py-3 rounded-xl font-black text-[9px] uppercase tracking-widest text-white shadow-lg"
+                className="bg-violet-600 px-6 py-3 rounded-xl font-black text-[9px] uppercase tracking-widest text-white shadow-lg"
               >
                 Engage
               </button>

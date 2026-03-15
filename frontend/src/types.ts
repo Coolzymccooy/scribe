@@ -103,6 +103,7 @@ export interface ScribeOrg {
 export interface TeamMeeting extends MeetingNote {
   orgId: string;
   sharedBy: string; // uid
+  teamStatus?: "recorded" | "transcribed" | "reviewed" | "action_items_sent";
 }
 
 export interface AnalyticsEndpointStats {

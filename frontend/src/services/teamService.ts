@@ -22,6 +22,7 @@ import {
   orderBy,
   serverTimestamp,
   arrayUnion,
+  onSnapshot,
   type Firestore,
 } from "firebase/firestore";
 import type { MeetingNote, ScribeOrg, OrgMember, TeamMeeting } from "../types";
@@ -208,4 +209,20 @@ export const removeFromOrg = async (
   meetingId: string
 ): Promise<void> => {
   await deleteDoc(teamMeetingDoc(orgId, meetingId));
+};
+
+/** Subscribe to real-time team meeting updates. Returns an unsubscribe function. */
+export const subscribeToOrgMeetings = (
+  orgId: string,
+  callback: (meetings: TeamMeeting[]) => void
+): (() => void) => {
+  const q = query(teamMeetingsCol(orgId), orderBy("date", "desc"));
+  return onSnapshot(q, (snap) => {
+    const meetings = snap.docs.map((d) => {
+      const data = d.data();
+      delete data._updatedAt;
+      return { ...data, id: d.id } as TeamMeeting;
+    });
+    callback(meetings);
+  });
 };

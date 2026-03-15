@@ -10,7 +10,15 @@ const DB_NAME = 'ScribeAINeuralCache';
 const STORE_NAME = 'audio_blobs';
 const LEGACY_CHUNKS_STORE_NAME = 'audio_chunks_temp';
 const CHUNKS_STORE_NAME = 'audio_chunks_temp_v2';
-const DB_VERSION = 3;
+const RECAP_CACHE_STORE = 'recap_cache';
+const DB_VERSION = 4;
+
+type RecapCacheRecord = {
+  meetingId: string;
+  audioBase64: string;
+  summaryHash: string;
+  createdAt: number;
+};
 
 type ChunkRecord = {
   id?: number;
@@ -34,6 +42,10 @@ export const initDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(CHUNKS_STORE_NAME)) {
         const chunkStore = db.createObjectStore(CHUNKS_STORE_NAME, { keyPath: 'id', autoIncrement: true });
         chunkStore.createIndex('sessionId', 'sessionId', { unique: false });
+      }
+
+      if (!db.objectStoreNames.contains(RECAP_CACHE_STORE)) {
+        db.createObjectStore(RECAP_CACHE_STORE, { keyPath: 'meetingId' });
       }
 
       // One-time migration from legacy { sessionId -> Blob[] } format.
@@ -247,4 +259,46 @@ export const listUnfinishedSessions = async (): Promise<string[]> => {
 
   const legacySessions = await listLegacySessions(db);
   return Array.from(new Set([...v2Sessions, ...legacySessions]));
+};
+
+/**
+ * RECAP CACHE METHODS
+ */
+
+export const saveRecapAudio = async (meetingId: string, audioBase64: string, summaryHash: string): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(RECAP_CACHE_STORE, 'readwrite');
+    const store = tx.objectStore(RECAP_CACHE_STORE);
+    const request = store.put({
+      meetingId,
+      audioBase64,
+      summaryHash,
+      createdAt: Date.now(),
+    } satisfies RecapCacheRecord);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+};
+
+export const getRecapAudio = async (meetingId: string): Promise<RecapCacheRecord | null> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(RECAP_CACHE_STORE, 'readonly');
+    const store = tx.objectStore(RECAP_CACHE_STORE);
+    const request = store.get(meetingId);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+};
+
+export const deleteRecapAudio = async (meetingId: string): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(RECAP_CACHE_STORE, 'readwrite');
+    const store = tx.objectStore(RECAP_CACHE_STORE);
+    const request = store.delete(meetingId);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
 };

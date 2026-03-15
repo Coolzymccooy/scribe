@@ -11,7 +11,8 @@ import type {
   Theme,
   AISummary,
   CalendarEvent,
-  AnalyticsPayload
+  AnalyticsPayload,
+  TeamMeeting,
 } from './types';
 
 import {
@@ -44,6 +45,7 @@ import {
   updateOrgName,
   refreshInviteCode,
   findOrgByInviteCode,
+  subscribeToOrgMeetings,
 } from "./services/teamService";
 
 
@@ -53,8 +55,12 @@ import {
   appendAudioChunk,
   clearAudioChunks,
   listUnfinishedSessions,
-  getAudioChunks
+  getAudioChunks,
+  saveRecapAudio,
+  getRecapAudio,
+  deleteRecapAudio,
 } from "./services/storageService";
+import { useConnectivityMonitor } from "./hooks/useConnectivityMonitor";
 import {
   saveMeetingToCloud,
   saveAudioToCloud,
@@ -726,6 +732,42 @@ const SYSTEM_RECORDING_GAIN = 0.78;
 const MIX_BUS_GAIN = 0.92;
 const AI_BRIEF_CLICK_COOLDOWN_MS = 30_000;
 
+/** Simple hash for cache invalidation (not cryptographic). */
+const simpleHash = (str: string): string => {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  }
+  return h.toString(36);
+};
+
+const formatMeetingForWhatsApp = (meeting: MeetingNote): string => {
+  const lines: string[] = [];
+  lines.push(`*${meeting.title}*`);
+  lines.push(`Date: ${new Date(meeting.date).toLocaleDateString()} | Duration: ${formatTime(meeting.duration)}`);
+  lines.push("");
+  if (meeting.summary && typeof meeting.summary === "object") {
+    const s = meeting.summary as AISummary;
+    if (s.executiveSummary?.length) {
+      lines.push("*Summary:*");
+      s.executiveSummary.forEach((item) => lines.push(`- ${item}`));
+      lines.push("");
+    }
+    if (s.actionItems?.length) {
+      lines.push("*Action Items:*");
+      s.actionItems.forEach((item) => lines.push(`\u2610 ${item}`));
+      lines.push("");
+    }
+    if (s.decisions?.length) {
+      lines.push("*Decisions:*");
+      s.decisions.forEach((item) => lines.push(`\u2713 ${item}`));
+      lines.push("");
+    }
+  }
+  lines.push("_Shared via ScribeAI_");
+  return lines.join("\n");
+};
+
 const PROCESSING_PHASES = [
   { key: "finalize", label: "Finalizing audio", detail: "Sealing capture chunks and preparing payload." },
   { key: "transcribe", label: "Transcribing speech", detail: "Converting conversation audio into speaker text." },
@@ -1200,49 +1242,6 @@ const MOCK_SEED: MeetingNote[] = [
   },
 ];
 
-const MOCK_ENTERPRISE_FEED = [
-  {
-    id: "ent-1",
-    title: "Global Architecture Sync",
-    team: "Core Platform",
-    duration: "1h 24m",
-    date: "Today",
-    status: "Analysis Finished",
-    details:
-      "Focused on scaling local-first sync protocols across European nodes. Decision reached on zero-trust metadata architecture.",
-    syncStatus: "cloud",
-  },
-  {
-    id: "ent-2",
-    title: "Customer Experience Review",
-    team: "Success Ops",
-    duration: "45m",
-    date: "Yesterday",
-    status: "Action Items Sent",
-    details: "Reviewed Q3 satisfaction metrics. Automated support pipelines are showing higher throughput.",
-    syncStatus: "cloud",
-  },
-  {
-    id: "ent-3",
-    title: "Weekly Product Roadmap",
-    team: "Design Hub",
-    duration: "1h 05m",
-    date: "2 days ago",
-    status: "Summarized",
-    details: "Product vision discussed. Emphasis on multi-modal interactions and clean UX.",
-    syncStatus: "cloud",
-  },
-  {
-    id: "ent-4",
-    title: "Enterprise Security Audit",
-    team: "InfoSec",
-    duration: "2h 12m",
-    date: "Oct 28",
-    status: "Synced",
-    details: "Bi-annual security sweep completed. No anomalies detected in encryption partitions.",
-    syncStatus: "cloud",
-  },
-];
 
 
 type AppProps = {
@@ -1332,6 +1331,40 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
   }, [meetings, firebaseUid]);
 
   const [workspaceTab, setWorkspaceTab] = useState<"personal" | "enterprise" | "cloud">("personal");
+
+  // ── Team Feed: real-time data from Firestore ──
+  const [teamFeedMeetings, setTeamFeedMeetings] = useState<TeamMeeting[]>([]);
+  const [teamFeedFilter, setTeamFeedFilter] = useState("");
+  const [teamFeedDateRange, setTeamFeedDateRange] = useState<"all" | "today" | "week" | "month">("all");
+
+  useEffect(() => {
+    const orgId = localStorage.getItem("scribe_org_id");
+    if (!orgId) return;
+    const unsub = subscribeToOrgMeetings(orgId, setTeamFeedMeetings);
+    return unsub;
+  }, []);
+
+  const filteredTeamFeed = useMemo(() => {
+    let result = teamFeedMeetings;
+    if (teamFeedFilter) {
+      const q = teamFeedFilter.toLowerCase();
+      result = result.filter(
+        (m) =>
+          m.title.toLowerCase().includes(q) ||
+          (typeof m.summary === "object" && m.summary?.executiveSummary?.some((s: string) => s.toLowerCase().includes(q)))
+      );
+    }
+    if (teamFeedDateRange !== "all") {
+      const now = new Date();
+      const cutoff = new Date();
+      if (teamFeedDateRange === "today") cutoff.setHours(0, 0, 0, 0);
+      else if (teamFeedDateRange === "week") cutoff.setDate(now.getDate() - 7);
+      else if (teamFeedDateRange === "month") cutoff.setMonth(now.getMonth() - 1);
+      result = result.filter((m) => new Date(m.date) >= cutoff);
+    }
+    return result;
+  }, [teamFeedMeetings, teamFeedFilter, teamFeedDateRange]);
+
   const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
@@ -1503,12 +1536,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
 
   // Modals & details
   const [activeArticle, setActiveArticle] = useState<{ title: string; content: string } | null>(null);
-  const [enterpriseDetail, setEnterpriseDetail] = useState<{
-    title: string;
-    team: string;
-    details: string;
-    syncStatus?: string;
-  } | null>(null);
+  const [enterpriseDetail, setEnterpriseDetail] = useState<TeamMeeting | null>(null);
 
   const [isSupportOpen, setIsSupportOpen] = useState(false);
   const [supportChat, setSupportChat] = useState<ChatMessage[]>([
@@ -2560,6 +2588,37 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
       });
   }, [isRecording, isProcessing, runPendingProcessingJob, createFailedMeetingPlaceholder, setProcessingPhase, showToast]);
 
+  // ── Connectivity monitor: auto-transcribe offline recordings on reconnect ──
+  const isOnline = useConnectivityMonitor(
+    useCallback(async () => {
+      // On reconnect, find offline meetings and auto-transcribe them
+      const offlineMeetings = meetings.filter((m) => m.syncStatus === "offline" && m.audioStorageKey);
+      if (offlineMeetings.length === 0) return;
+
+      showToast(`Back online \u2014 transcribing ${offlineMeetings.length} offline recording(s)...`, "info");
+
+      for (const m of offlineMeetings) {
+        try {
+          const audioBlob = await getAudioBlobWithCloudFallback(m.audioStorageKey!);
+          if (!audioBlob) continue;
+          const mimeType = audioBlob.type || "audio/webm";
+          setMeetings((prev) => prev.filter((p) => p.id !== m.id));
+          await startProcessingForAudio({
+            audioBlob,
+            mimeType,
+            storageKey: m.audioStorageKey!,
+            accent: m.accentPreference,
+            duration: m.duration,
+            inputSourceLabel: m.inputSource || "Microphone",
+            fallbackTitle: m.title,
+          });
+        } catch (err) {
+          console.error("Auto-transcribe failed for", m.id, err);
+        }
+      }
+    }, [meetings, getAudioBlobWithCloudFallback, startProcessingForAudio, showToast])
+  );
+
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   const startRecording = useCallback(async () => {
@@ -2730,8 +2789,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
 
         // OFFLINE MODE CHECK
         const offlineFallbackTitle = "Offline Recording (Tap to Transcribe)";
-        if (!navigator.onLine) {
-          showToast("Offline Mode: Session saved locally. Push to transcribe when online.", "info");
+        if (!isOnline) {
+          showToast("Offline Mode: Session saved locally. Will auto-transcribe when online.", "info");
 
           // Create a placeholder local meeting that can be pushed later
           const newMeeting: MeetingNote = {
@@ -2932,6 +2991,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
     };
   }, [clearRecapCooldownTimer]);
 
+  const recapWavBlobRef = useRef<Blob | null>(null);
+
   const playRecap = useCallback(async () => {
     if (!selectedMeeting?.summary) {
       showToast("No summary to recap", "info");
@@ -2941,6 +3002,31 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
       showToast("AI brief is already processing. Please wait.", "info");
       return;
     }
+
+    const currentHash = simpleHash(JSON.stringify(selectedMeeting.summary));
+
+    // Check cache first
+    try {
+      const cached = await getRecapAudio(selectedMeeting.id);
+      if (cached && cached.summaryHash === currentHash) {
+        resetRecapState();
+        const pcmBytes = decodeBase64ToUint8(cached.audioBase64);
+        const wavBlob = buildWavBlob(pcmBytes, 24000);
+        recapWavBlobRef.current = wavBlob;
+        const url = URL.createObjectURL(wavBlob);
+        setRecapAudioUrl(url);
+        const audio = audioRef.current;
+        if (audio) {
+          audio.src = url;
+          await audio.play();
+        }
+        showToast("Playing Neural Brief (cached)");
+        return;
+      }
+    } catch {
+      // Cache miss — proceed to API
+    }
+
     const remainingMs = recapCooldownUntilRef.current - Date.now();
     if (remainingMs > 0) {
       const remainingSeconds = Math.ceil(remainingMs / 1000);
@@ -2956,9 +3042,12 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
         showToast("No audio returned", "info");
         return;
       }
+      // Cache the TTS result
+      saveRecapAudio(selectedMeeting.id, audioData, currentHash).catch(() => {});
       resetRecapState();
       const pcmBytes = decodeBase64ToUint8(audioData);
       const wavBlob = buildWavBlob(pcmBytes, 24000);
+      recapWavBlobRef.current = wavBlob;
       const url = URL.createObjectURL(wavBlob);
       setRecapAudioUrl(url);
       const audio = audioRef.current;
@@ -3491,7 +3580,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                         <button
                           onClick={async (e) => {
                             e.stopPropagation();
-                            if (!navigator.onLine) {
+                            if (!isOnline) {
                               showToast("No internet connection. Please try again when online.", "info");
                               return;
                             }
@@ -3524,7 +3613,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                         <button
                           onClick={async (e) => {
                             e.stopPropagation();
-                            if (!navigator.onLine) {
+                            if (!isOnline) {
                               showToast("Still offline. Please connect to internet to transcribe.", "info");
                               return;
                             }
@@ -3627,33 +3716,109 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                 </div>
               ))}
 
-            {workspaceTab === "enterprise" &&
-              MOCK_ENTERPRISE_FEED.map((feed) => (
-                <div
-                  key={feed.id}
-                  onClick={() => setEnterpriseDetail(feed)}
-                  className="p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.02] border border-slate-200 dark:border-white/5 flex flex-col justify-between h-60 max-[360px]:h-52 transition-all hover:bg-slate-50 dark:hover:bg-white/[0.05] cursor-pointer group shadow-lg relative"
-                >
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-start">
-                      <span className="px-3 py-1 bg-slate-200 dark:bg-white/5 text-slate-600 dark:text-slate-400 rounded-lg text-[9px] font-black uppercase tracking-widest">
-                        {feed.team}
-                      </span>
-                      <span className="text-slate-400 dark:text-slate-600 text-[9px] font-black uppercase tracking-widest">
-                        {feed.date}
-                      </span>
-                    </div>
-                    <h3 className="text-lg md:text-xl font-black group-hover:text-indigo-500 transition-colors leading-tight">
-                      {feed.title}
-                    </h3>
-                  </div>
-                  <div className="flex items-center text-[10px] font-black uppercase tracking-widest text-indigo-500/80">
-                    <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mr-3 animate-pulse"></div>
-                    {feed.status}
-                  </div>
-                  <Tooltip text="View details" />
+            {workspaceTab === "enterprise" && (
+              <>
+                {/* Filter bar */}
+                <div className="col-span-full flex flex-wrap gap-3 items-center mb-2">
+                  <input
+                    type="text"
+                    placeholder="Search team feed..."
+                    value={teamFeedFilter}
+                    onChange={(e) => setTeamFeedFilter(e.target.value)}
+                    className="flex-1 min-w-[180px] h-9 px-4 bg-white dark:bg-white/5 border border-slate-200 dark:border-white/10 rounded-xl text-[11px] font-bold placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                  />
+                  {(["all", "today", "week", "month"] as const).map((range) => (
+                    <button
+                      key={range}
+                      onClick={() => setTeamFeedDateRange(range)}
+                      className={`h-9 px-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border ${
+                        teamFeedDateRange === range
+                          ? "bg-indigo-600 text-white border-indigo-600"
+                          : "bg-white dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-500 hover:text-indigo-500"
+                      }`}
+                    >
+                      {range === "all" ? "All" : range === "today" ? "Today" : range === "week" ? "This Week" : "This Month"}
+                    </button>
+                  ))}
                 </div>
-              ))}
+
+                {/* Team insights bar */}
+                {teamFeedMeetings.length > 0 && (
+                  <div className="col-span-full grid grid-cols-3 gap-3 mb-2">
+                    <div className="p-4 rounded-2xl bg-indigo-600/5 border border-indigo-500/10 text-center">
+                      <p className="text-2xl font-black text-indigo-500">{teamFeedMeetings.length}</p>
+                      <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 mt-1">Total Meetings</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-indigo-600/5 border border-indigo-500/10 text-center">
+                      <p className="text-2xl font-black text-indigo-500">
+                        {teamFeedMeetings.filter((m) => {
+                          const d = new Date(m.date);
+                          const now = new Date();
+                          const weekAgo = new Date();
+                          weekAgo.setDate(now.getDate() - 7);
+                          return d >= weekAgo;
+                        }).length}
+                      </p>
+                      <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 mt-1">This Week</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-indigo-600/5 border border-indigo-500/10 text-center">
+                      <p className="text-2xl font-black text-indigo-500">
+                        {Math.round(teamFeedMeetings.reduce((a, m) => a + m.duration, 0) / 60)}m
+                      </p>
+                      <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 mt-1">Total Duration</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Meeting cards */}
+                {filteredTeamFeed.length > 0 ? (
+                  filteredTeamFeed.map((m) => (
+                    <div
+                      key={m.id}
+                      onClick={() => setEnterpriseDetail(m)}
+                      className="p-7 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-white/[0.02] border border-slate-200 dark:border-white/5 flex flex-col justify-between h-60 max-[360px]:h-52 transition-all hover:bg-slate-50 dark:hover:bg-white/[0.05] cursor-pointer group shadow-lg relative"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-start">
+                          <span className="px-3 py-1 bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 rounded-lg text-[9px] font-black uppercase tracking-widest">
+                            {m.type}
+                          </span>
+                          <span className="text-slate-400 dark:text-slate-600 text-[9px] font-black uppercase tracking-widest">
+                            {formatRecordedAt(m.date)}
+                          </span>
+                        </div>
+                        <h3 className="text-lg md:text-xl font-black group-hover:text-indigo-500 transition-colors leading-tight line-clamp-2">
+                          {m.title}
+                        </h3>
+                      </div>
+                      <div className="space-y-2">
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate">
+                          {m.sharedBy ? `Shared by ${m.sharedBy.slice(0, 8)}...` : ""}
+                        </p>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center text-[10px] font-black uppercase tracking-widest text-indigo-500/80">
+                            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mr-2 animate-pulse" />
+                            {m.teamStatus || (m.transcript?.length ? "Transcribed" : "Recorded")}
+                          </div>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">
+                            {formatTime(m.duration)}
+                          </span>
+                        </div>
+                      </div>
+                      <Tooltip text="View details" />
+                    </div>
+                  ))
+                ) : (
+                  <div className="col-span-full py-16 text-center opacity-50">
+                    <p className="font-black uppercase tracking-[0.3em] text-xs">
+                      {teamFeedMeetings.length === 0
+                        ? "No team meetings yet. Share recordings from your Team Workspace."
+                        : "No meetings match your filters."}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -3677,6 +3842,16 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
               {isRecording ? `REC  ${formatTime(recordingTime)}` : isProcessing ? `${activeProcessingPhase?.label || "Processing"}  ${processingProgressPercent}%` : "Ready"}
             </div>
           </div>
+
+          {/* ── Offline banner ─── */}
+          {!isOnline && (
+            <div className="w-full rounded-2xl bg-orange-500/[0.07] border border-orange-500/30 px-4 py-2.5 flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse shrink-0" />
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-orange-400">
+                You are offline. Recordings will auto-transcribe when you reconnect.
+              </p>
+            </div>
+          )}
 
           {/* ── Crash recovery banner (conditional) ─── */}
           {sortedRecoverySessions.length > 0 && latestRecoverySessionId && (
@@ -4146,6 +4321,41 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                     >
                       Stop
                     </button>
+                    <button
+                      onClick={() => {
+                        const blob = recapWavBlobRef.current;
+                        if (!blob) return;
+                        const a = document.createElement("a");
+                        a.href = URL.createObjectURL(blob);
+                        const title = selectedMeeting?.title?.replace(/[^a-zA-Z0-9 ]/g, "").trim() || "meeting";
+                        a.download = `${title}_brief.wav`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        showToast("Brief downloaded");
+                      }}
+                      className="px-4 py-2 rounded-2xl border border-indigo-400/30 bg-indigo-500/10 text-indigo-400 font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500/20 transition-all"
+                    >
+                      Download
+                    </button>
+                    {typeof navigator.share === "function" && (
+                      <button
+                        onClick={async () => {
+                          const blob = recapWavBlobRef.current;
+                          if (!blob) return;
+                          const title = selectedMeeting?.title || "Meeting Brief";
+                          const file = new File([blob], `${title.replace(/[^a-zA-Z0-9 ]/g, "").trim()}_brief.wav`, { type: "audio/wav" });
+                          try {
+                            await navigator.share({ files: [file], title: `${title} - AI Brief` });
+                          } catch (err) {
+                            if ((err as Error)?.name !== "AbortError") showToast("Share cancelled", "info");
+                          }
+                        }}
+                        className="px-4 py-2 rounded-2xl border border-indigo-400/30 bg-indigo-500/10 text-indigo-400 font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500/20 transition-all"
+                      >
+                        Share
+                      </button>
+                    )}
                     <span className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">
                       {recapDuration
                         ? `${formatTime(audioRef.current?.currentTime || 0)} / ${formatTime(recapDuration)}`
@@ -4186,6 +4396,16 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                 onClick={() => syncToCloud(selectedMeeting.id)}
               >
                 Backup to Cloud
+              </button>
+
+              <button
+                className="w-full p-4 text-left text-[11px] font-black uppercase tracking-widest text-green-600 hover:text-white hover:bg-green-600 dark:hover:bg-green-600/20 rounded-2xl transition-all"
+                onClick={() => {
+                  const text = formatMeetingForWhatsApp(selectedMeeting);
+                  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+                }}
+              >
+                Share to WhatsApp
               </button>
             </div>
 
@@ -4610,7 +4830,7 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
 
       {enterpriseDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/80 backdrop-blur-md">
-          <div className="max-w-xl w-full p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-3xl space-y-5 relative">
+          <div className="max-w-xl w-full max-h-[80vh] overflow-y-auto p-8 max-[360px]:p-4 rounded-[2.5rem] max-[360px]:rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-white/10 shadow-3xl space-y-5 relative">
             <button
               onClick={() => setEnterpriseDetail(null)}
               className="absolute top-6 right-7 text-slate-500 hover:text-indigo-500 font-black"
@@ -4618,15 +4838,66 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
               ✕
             </button>
             <div className="space-y-1">
-              <p className="text-[10px] font-black uppercase text-indigo-500">{enterpriseDetail.team} Feed</p>
+              <p className="text-[10px] font-black uppercase text-indigo-500">{enterpriseDetail.type} &middot; {formatRecordedAt(enterpriseDetail.date)}</p>
               <h2 className="text-2xl font-black">{enterpriseDetail.title}</h2>
+              <p className="text-[10px] font-bold text-slate-500">{formatTime(enterpriseDetail.duration)} &middot; Shared by {enterpriseDetail.sharedBy?.slice(0, 12) || "team member"}</p>
             </div>
-            <p className="text-base leading-relaxed text-slate-700 dark:text-slate-300 font-medium">
-              {enterpriseDetail.details}
-            </p>
-            <div className="bg-indigo-600/10 p-4 rounded-2xl flex items-center gap-3">
-              <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
-              <span className="text-[10px] font-black uppercase">Cloud Verified</span>
+
+            {enterpriseDetail.summary && typeof enterpriseDetail.summary === "object" && (
+              <div className="space-y-4">
+                {(enterpriseDetail.summary as AISummary).executiveSummary?.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-2">Summary</p>
+                    <ul className="space-y-1">
+                      {(enterpriseDetail.summary as AISummary).executiveSummary.map((s, i) => (
+                        <li key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 font-medium">- {s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {(enterpriseDetail.summary as AISummary).actionItems?.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-2">Action Items</p>
+                    <ul className="space-y-1">
+                      {(enterpriseDetail.summary as AISummary).actionItems.map((a, i) => (
+                        <li key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 font-medium">{"\u2610"} {a}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {(enterpriseDetail.summary as AISummary).decisions?.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-2">Decisions</p>
+                    <ul className="space-y-1">
+                      {(enterpriseDetail.summary as AISummary).decisions.map((d, i) => (
+                        <li key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 font-medium">{"\u2713"} {d}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!enterpriseDetail.summary && (
+              <p className="text-base leading-relaxed text-slate-700 dark:text-slate-300 font-medium italic">
+                No summary available for this meeting.
+              </p>
+            )}
+
+            <div className="flex items-center gap-3">
+              <div className="flex-1 bg-indigo-600/10 p-4 rounded-2xl flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                <span className="text-[10px] font-black uppercase">{enterpriseDetail.teamStatus || "Shared"}</span>
+              </div>
+              <button
+                onClick={() => {
+                  const text = formatMeetingForWhatsApp(enterpriseDetail);
+                  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+                }}
+                className="h-full px-5 py-4 rounded-2xl bg-green-600/10 border border-green-500/20 text-green-500 text-[9px] font-black uppercase tracking-widest hover:bg-green-600/20 transition-all"
+              >
+                WhatsApp
+              </button>
             </div>
           </div>
         </div>

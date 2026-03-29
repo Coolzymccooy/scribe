@@ -1,0 +1,52 @@
+version: '3.9'
+
+# Local development / smoke-test compose file.
+# For production, deploy each service separately in Coolify.
+#
+# Usage:
+#   cp server/.env.example server/.env   # fill in GEMINI_API_KEY etc.
+#   docker compose up --build
+
+services:
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: scribe-backend
+    restart: unless-stopped
+    env_file:
+      - ./server/.env
+    environment:
+      PORT: 3003
+      STATE_FILE_PATH: /data/state.json
+      # Allow requests from the nginx frontend container
+      CORS_ORIGINS: http://localhost:8080
+    ports:
+      - "3003:3003"
+    volumes:
+      # Persistent state (OAuth tokens, analytics)
+      - scribe-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: scribe-frontend
+    restart: unless-stopped
+    environment:
+      # Points nginx proxy to the backend container (internal Docker network)
+      BACKEND_URL: http://scribe-backend:3003
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  scribe-data:

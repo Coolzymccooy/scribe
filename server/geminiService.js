@@ -16,8 +16,8 @@ import crypto from 'crypto';
  * exposing these capabilities to the client.
  */
 
-const TRANSCRIBE_MODEL = process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-3-flash-preview';
-const ANALYZE_MODEL = process.env.GEMINI_ANALYZE_MODEL || 'gemini-3-flash-preview';
+const TRANSCRIBE_MODEL = process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-2.5-flash-preview';
+const ANALYZE_MODEL = process.env.GEMINI_ANALYZE_MODEL || 'gemini-2.5-flash-preview';
 const CHUNKED_ANALYSIS_THRESHOLD_CHARS = Number(process.env.CHUNKED_ANALYSIS_THRESHOLD_CHARS || 16000);
 const MAX_ANALYSIS_CHUNK_CHARS = Number(process.env.MAX_ANALYSIS_CHUNK_CHARS || 12000);
 const CHUNK_ANALYSIS_PARALLELISM = Math.max(1, Number(process.env.CHUNK_ANALYSIS_PARALLELISM || 2));
@@ -320,7 +320,7 @@ export async function askTranscript(meeting, question, history) {
   const ai = getClient();
   const transcriptText = meeting.transcript.map((segment) => `[${segment.speaker}]: ${segment.text}`).join('\n');
   const chat = ai.chats.create({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash-preview',
     config: {
       systemInstruction: `You are an AI assistant helping a user understand a meeting transcript. Use the provided transcript to answer questions accurately. Transcript:\n${transcriptText}`,
     },
@@ -356,14 +356,14 @@ export async function generateEmailDraft(meeting) {
 
     Format the output as plain text suitable for an email body. Do not include a Subject line in the text itself.
   `;
-  const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+  const response = await ai.models.generateContent({ model: 'gemini-2.5-flash-preview', contents: prompt });
   return response.text || '';
 }
 
 export async function askSupport(question, history) {
   const ai = getClient();
   const chat = ai.chats.create({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-2.5-flash-preview',
     config: {
       systemInstruction: 'You are a senior ScribeAI support engineer. Provide technical assistance regarding IndexedDB local storage, cloud sync, and neural encryption.',
     },

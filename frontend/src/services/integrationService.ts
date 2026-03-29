@@ -1,7 +1,7 @@
 // src/services/integrationService.ts
 // Calls the ScribeAI backend integration endpoints for Slack and Notion
 
-const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:3003";
+const API_BASE = import.meta.env.VITE_BACKEND_URL?.replace(/\/$/, '') ?? '';
 
 export interface IntegrationResult {
   ok: boolean;

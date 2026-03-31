@@ -311,6 +311,20 @@ const runProcessingJob = async (jobId) => {
       audioFilePath: null,
     });
 
+    // If transcription returned no segments, skip analysis and complete gracefully
+    if (!Array.isArray(transcript) || transcript.length === 0) {
+      updateProcessingJob(jobId, {
+        status: 'completed',
+        phase: 'completed',
+        progress: 100,
+        summary: { executiveSummary: [], actionItems: [], decisions: [], openQuestions: [] },
+        completedAt: Date.now(),
+        error: null,
+        audioFilePath: null,
+      });
+      return;
+    }
+
     const summary = await runWithRetries(
       () =>
         withTimeout(
@@ -845,7 +859,7 @@ app.post('/api/processing-jobs', upload.single('audio'), async (req, res) => {
     }
 
     const accentRaw = String(req.body?.accent || 'standard').toLowerCase();
-    const accent = ['standard', 'uk', 'nigerian'].includes(accentRaw) ? accentRaw : 'standard';
+    const accent = ['standard', 'uk', 'nigerian', 'ghanaian', 'southafrican', 'kenyan'].includes(accentRaw) ? accentRaw : 'standard';
     const mimeType = String(req.body?.mimeType || audioFile.mimetype || 'audio/webm');
     const audioFilePath = audioFile.path;
     const jobId = randomUUID();

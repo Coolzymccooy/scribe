@@ -207,6 +207,12 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
         },
       },
     });
+    if (response.text == null) {
+      const blockReason = response.promptFeedback?.blockReason;
+      if (blockReason) {
+        throw new Error(`Transcription blocked by safety filter: ${blockReason}`);
+      }
+    }
     return safeJsonParse(response.text || '[]', []);
   }
 
@@ -259,6 +265,12 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
         },
       },
     });
+    if (response.text == null) {
+      const blockReason = response.promptFeedback?.blockReason;
+      if (blockReason) {
+        throw new Error(`Transcription blocked by safety filter: ${blockReason}`);
+      }
+    }
     return safeJsonParse(response.text || '[]', []);
   } finally {
     await fs.unlink(tempFilePath).catch(() => { });

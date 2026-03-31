@@ -23,17 +23,20 @@ FROM nginx:1.27-alpine
 # Copy the built Vite output
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# The official nginx image processes /etc/nginx/templates/*.template
-# with envsubst at container start and writes the result to
-# /etc/nginx/conf.d/default.conf — this is how BACKEND_URL is injected.
-COPY nginx.conf /etc/nginx/templates/default.conf.template
+# Copy template to a staging location; we generate the final config
+# ourselves in CMD so we control exactly which variables get substituted.
+COPY nginx.conf /etc/nginx/nginx.conf.template
 
 EXPOSE 80
 
 # BACKEND_URL must be provided at runtime, e.g.:
 #   docker run -e BACKEND_URL=https://api-scribe.tiwaton.co.uk scribe-frontend
 # In Coolify: set it as an environment variable on the service.
-
-# Run nginx config test first so any config errors appear in Coolify logs,
-# then start nginx in the foreground.
-CMD ["/bin/sh", "-c", "nginx -t 2>&1 && exec nginx -g 'daemon off;'"]
+#
+# We call envsubst with an explicit variable list ('${BACKEND_URL}') so that
+# ONLY ${BACKEND_URL} is substituted. All other nginx $variables ($host,
+# $uri, $request_uri, $backend, etc.) are left intact as nginx expects them.
+CMD ["/bin/sh", "-c", \
+  "envsubst '${BACKEND_URL}' < /etc/nginx/nginx.conf.template > /etc/nginx/conf.d/default.conf && \
+   nginx -t 2>&1 && \
+   exec nginx -g 'daemon off;'"]

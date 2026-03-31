@@ -31,5 +31,9 @@ COPY nginx.conf /etc/nginx/templates/default.conf.template
 EXPOSE 80
 
 # BACKEND_URL must be provided at runtime, e.g.:
-#   docker run -e BACKEND_URL=http://scribe-backend:3003 scribe-frontend
+#   docker run -e BACKEND_URL=https://api-scribe.tiwaton.co.uk scribe-frontend
 # In Coolify: set it as an environment variable on the service.
+
+# Run nginx config test first so any config errors appear in Coolify logs,
+# then start nginx in the foreground.
+CMD ["/bin/sh", "-c", "nginx -t 2>&1 && exec nginx -g 'daemon off;'"]

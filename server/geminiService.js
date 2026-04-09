@@ -118,10 +118,20 @@ const summarizeTranscriptChunk = async (ai, transcriptChunk, type, accent, label
     config: {
       responseMimeType: 'application/json',
       responseSchema: SUMMARY_RESPONSE_SCHEMA,
+      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 
-  return safeJsonParse(response.text || '{}', {
+  if (response.text == null) {
+    const blockReason = response.promptFeedback?.blockReason;
+    throw new Error(
+      blockReason
+        ? `Analysis blocked by safety filter: ${blockReason}`
+        : 'Gemini returned no analysis text'
+    );
+  }
+
+  return safeJsonParse(response.text, {
     executiveSummary: [],
     actionItems: [],
     decisions: [],
@@ -205,15 +215,18 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
             required: ['id', 'startTime', 'endTime', 'speaker', 'text'],
           },
         },
+        thinkingConfig: { thinkingBudget: 0 },
       },
     });
     if (response.text == null) {
       const blockReason = response.promptFeedback?.blockReason;
-      if (blockReason) {
-        throw new Error(`Transcription blocked by safety filter: ${blockReason}`);
-      }
+      throw new Error(
+        blockReason
+          ? `Transcription blocked by safety filter: ${blockReason}`
+          : 'Gemini returned no transcription text — model may not support this audio format'
+      );
     }
-    return safeJsonParse(response.text || '[]', []);
+    return safeJsonParse(response.text, []);
   }
 
   // Large recordings (>15MB): upload directly from multer temp path via the Gemini File API
@@ -263,15 +276,18 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
             required: ['id', 'startTime', 'endTime', 'speaker', 'text'],
           },
         },
+        thinkingConfig: { thinkingBudget: 0 },
       },
     });
     if (response.text == null) {
       const blockReason = response.promptFeedback?.blockReason;
-      if (blockReason) {
-        throw new Error(`Transcription blocked by safety filter: ${blockReason}`);
-      }
+      throw new Error(
+        blockReason
+          ? `Transcription blocked by safety filter: ${blockReason}`
+          : 'Gemini returned no transcription text — model may not support this audio format'
+      );
     }
-    return safeJsonParse(response.text || '[]', []);
+    return safeJsonParse(response.text, []);
   } finally {
     await fs.unlink(tempFilePath).catch(() => { });
     if (uploadResult && uploadResult.name) {
@@ -317,10 +333,20 @@ export async function analyzeMeeting(transcript, type, accent) {
     config: {
       responseMimeType: 'application/json',
       responseSchema: SUMMARY_RESPONSE_SCHEMA,
+      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 
-  return safeJsonParse(merged.text || '{}', {
+  if (merged.text == null) {
+    const blockReason = merged.promptFeedback?.blockReason;
+    throw new Error(
+      blockReason
+        ? `Merge analysis blocked by safety filter: ${blockReason}`
+        : 'Gemini returned no merge analysis text'
+    );
+  }
+
+  return safeJsonParse(merged.text, {
     executiveSummary: [],
     actionItems: [],
     decisions: [],

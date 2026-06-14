@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import multer from 'multer';
 import { randomUUID } from 'crypto';
@@ -111,9 +112,22 @@ const PROCESSING_TRANSCRIBE_TIMEOUT_MS = Number(process.env.PROCESSING_TRANSCRIB
 const PROCESSING_SUMMARY_TIMEOUT_MS = Number(process.env.PROCESSING_SUMMARY_TIMEOUT_MS || 4 * 60 * 1000);
 const MAX_UPLOAD_BYTES = Number(process.env.MAX_AUDIO_UPLOAD_BYTES || 300 * 1024 * 1024);
 
+// Durable upload directory: store in-flight audio on the persistent volume
+// (e.g. Coolify /data) instead of os.tmpdir(), so a redeploy/restart mid-job
+// can re-enqueue the job from disk rather than losing the audio.
+const RESOLVED_STATE_PATH = path.resolve(process.cwd(), process.env.STATE_FILE_PATH || 'state.json');
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(path.dirname(RESOLVED_STATE_PATH), 'uploads');
+try {
+  fsSync.mkdirSync(UPLOAD_DIR, { recursive: true });
+} catch (err) {
+  console.error('Failed to create upload dir, falling back to tmpdir:', err);
+}
+
 const upload = multer({
   storage: multer.diskStorage({
-    destination: os.tmpdir(),
+    destination: (req, file, cb) => {
+      cb(null, fsSync.existsSync(UPLOAD_DIR) ? UPLOAD_DIR : os.tmpdir());
+    },
     filename: (req, file, cb) => {
       cb(null, `${randomUUID()}-${file.originalname}`);
     }
@@ -216,6 +230,7 @@ const toClientJob = (job) => ({
 const serializeJobsForState = () => {
   const jobs = {};
   Object.values(processingJobsStore.byId).forEach((job) => {
+    const isTerminal = job.status === 'completed' || job.status === 'failed';
     jobs[job.id] = {
       id: job.id,
       status: job.status,
@@ -227,6 +242,10 @@ const serializeJobsForState = () => {
       error: job.error || null,
       transcript: job.status === 'completed' ? job.transcript : null,
       summary: job.status === 'completed' ? job.summary : null,
+      // Persist enough to resume an in-flight job after a restart.
+      audioFilePath: isTerminal ? null : job.audioFilePath || null,
+      mimeType: isTerminal ? null : job.mimeType || null,
+      accent: isTerminal ? null : job.accent || null,
     };
   });
 
@@ -238,19 +257,48 @@ const sanitizeSavedJobs = (savedJobs) => {
   Object.values(savedJobs || {}).forEach((jobLike) => {
     if (!jobLike?.id) return;
     const isDone = jobLike.status === 'completed';
-    const isFailed = jobLike.status === 'failed';
+    const wasFailed = jobLike.status === 'failed';
+
+    // If an in-flight job's audio still exists on the persistent volume, we can
+    // resume it instead of failing it — this is the key fix for losing 5–10 min
+    // recordings to a redeploy/restart.
+    const audioFilePath = jobLike.audioFilePath || null;
+    const audioStillOnDisk = Boolean(audioFilePath && fsSync.existsSync(audioFilePath));
+    const resumable = !isDone && !wasFailed && audioStillOnDisk;
+
+    if (resumable) {
+      hydrated[jobLike.id] = {
+        id: jobLike.id,
+        status: 'queued',
+        phase: 'queued',
+        progress: Math.min(20, Number(jobLike.progress || 2)),
+        createdAt: jobLike.createdAt || Date.now(),
+        updatedAt: Date.now(),
+        completedAt: null,
+        error: null,
+        transcript: null,
+        summary: null,
+        audioFilePath,
+        mimeType: jobLike.mimeType || 'audio/webm',
+        accent: jobLike.accent || 'standard',
+      };
+      return;
+    }
+
     hydrated[jobLike.id] = {
       id: jobLike.id,
-      status: isDone ? 'completed' : isFailed ? 'failed' : 'failed',
+      status: isDone ? 'completed' : 'failed',
       phase: isDone ? 'completed' : 'failed',
       progress: isDone ? 100 : Math.min(99, Number(jobLike.progress || 0)),
       createdAt: jobLike.createdAt || Date.now(),
       updatedAt: Date.now(),
       completedAt: jobLike.completedAt || null,
-      error: isDone ? null : jobLike.error || 'Server restarted before job completed. Please retry.',
+      error: isDone
+        ? null
+        : jobLike.error || 'Server restarted before job completed. Please retry.',
       transcript: isDone ? jobLike.transcript || null : null,
       summary: isDone ? jobLike.summary || null : null,
-      audioFilePath: null, // cleared after completion
+      audioFilePath: null,
       mimeType: null,
       accent: null,
     };
@@ -460,6 +508,13 @@ const applySavedState = (saved) => {
     processingJobsStore.byId = sanitizeSavedJobs(saved.processingJobs);
     processingJobsStore.queue = [];
     processingJobsStore.active = 0;
+
+    // Resume any jobs whose audio survived the restart.
+    const resumable = Object.values(processingJobsStore.byId).filter((j) => j.status === 'queued');
+    if (resumable.length) {
+      console.log(`Resuming ${resumable.length} in-flight processing job(s) after restart.`);
+      resumable.forEach((job) => enqueueProcessingJob(job.id));
+    }
   }
 };
 

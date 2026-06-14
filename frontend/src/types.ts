@@ -68,6 +68,26 @@ export interface MeetingNote {
   inputSource?: string;
   syncStatus?: "local" | "syncing" | "cloud" | "offline" | "failed";
   starred?: boolean;
+
+  // ── Reliability / cross-device durability ────────────────────────────────
+  /** Transcription lifecycle, independent of cloud-sync state. */
+  status?: "pending" | "processing" | "completed" | "failed";
+  /** True once the raw audio blob has been uploaded to Firebase Storage. */
+  audioUploaded?: boolean;
+  /** Current server-side processing job id, if one is in flight. */
+  jobId?: string | null;
+  /** Number of transcription attempts so far (for backoff + cap). */
+  retryCount?: number;
+  /** Last transcription error message, surfaced in the UI. */
+  lastError?: string | null;
+  /** Epoch ms of the last transcription attempt (for backoff). */
+  lastAttemptAt?: number | null;
+  /** Cross-device processing lock so two devices don't transcribe the same audio. */
+  claim?: { deviceId: string; claimedAt: number } | null;
+  /** Client epoch ms of the last mutation — used for last-write-wins merge. */
+  updatedAt?: number;
+  /** Tombstone: epoch ms when soft-deleted, so deletions propagate across devices. */
+  deletedAt?: number | null;
 }
 
 export type ViewState =

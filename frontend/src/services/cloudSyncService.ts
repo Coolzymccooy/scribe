@@ -23,6 +23,8 @@ import {
   getDocs,
   deleteDoc,
   writeBatch,
+  runTransaction,
+  onSnapshot,
   query,
   orderBy,
   serverTimestamp,
@@ -31,7 +33,7 @@ import {
 import {
   getStorage,
   ref,
-  uploadBytes,
+  uploadBytesResumable,
   getBlob,
   deleteObject,
   type FirebaseStorage,
@@ -99,7 +101,12 @@ export const saveMeetingToCloud = async (
   );
 };
 
-/** Upload audio blob to Firebase Storage. */
+/**
+ * Upload audio blob to Firebase Storage.
+ *
+ * Uses a resumable upload so large recordings (5–10 min) survive transient
+ * network blips instead of failing the whole request.
+ */
 export const saveAudioToCloud = async (
   uid: string,
   audioStorageKey: string,
@@ -109,7 +116,17 @@ export const saveAudioToCloud = async (
     getStorageBucket(),
     `users/${uid}/audio/${audioStorageKey}.webm`
   );
-  await uploadBytes(storageRef, blob);
+  const task = uploadBytesResumable(storageRef, blob, {
+    contentType: blob.type || "audio/webm",
+  });
+  await new Promise<void>((resolve, reject) => {
+    task.on(
+      "state_changed",
+      undefined,
+      (err) => reject(err),
+      () => resolve()
+    );
+  });
 };
 
 /** Download audio blob from Firebase Storage. */
@@ -183,40 +200,176 @@ export const batchSaveMeetingsToCloud = async (
   }
 };
 
+/** A recording's effective "last touched" time, for last-write-wins reconciliation. */
+const reconcileTimestamp = (m: MeetingNote): number => {
+  // Every mutation (including delete) stamps `updatedAt`, so it is authoritative.
+  if (typeof m.updatedAt === "number" && m.updatedAt > 0) {
+    return Math.max(m.updatedAt, typeof m.deletedAt === "number" ? m.deletedAt : 0);
+  }
+  // Legacy docs without `updatedAt`: fall back to the recording date so ordering is sane.
+  const dateMs = m.date ? Date.parse(m.date) : 0;
+  return Number.isFinite(dateMs) ? dateMs : 0;
+};
+
 /**
- * Merge cloud meetings with local meetings.
- * Cloud wins for metadata; local wins if the local copy is newer
- * (based on which has the longer transcript — heuristic for "more complete").
+ * Merge cloud + local recordings using last-write-wins on `updatedAt`,
+ * honouring `deletedAt` tombstones so deletions propagate across devices.
+ *
+ * Pure function — no Firestore access — so it can be unit tested directly.
  */
 export const mergeMeetings = (
   local: MeetingNote[],
   cloud: MeetingNote[]
 ): MeetingNote[] => {
-  const merged = new Map<string, MeetingNote>();
+  const byId = new Map<string, MeetingNote>();
 
-  // Seed with local
-  for (const m of local) {
-    merged.set(m.id, m);
-  }
-
-  // Overlay cloud — cloud wins unless local has more transcript data
-  for (const cm of cloud) {
-    const existing = merged.get(cm.id);
+  const consider = (incoming: MeetingNote) => {
+    const existing = byId.get(incoming.id);
     if (!existing) {
-      // New from cloud — mark as cloud
-      merged.set(cm.id, { ...cm, syncStatus: "cloud" });
-    } else {
-      const localHasMoreData =
-        (existing.transcript?.length || 0) > (cm.transcript?.length || 0);
-      if (localHasMoreData) {
-        // Keep local but mark synced
-        merged.set(cm.id, { ...existing, syncStatus: "cloud" });
-      } else {
-        // Cloud version is equal or better
-        merged.set(cm.id, { ...cm, syncStatus: "cloud" });
-      }
+      byId.set(incoming.id, incoming);
+      return;
+    }
+    // Whichever copy was touched most recently wins outright.
+    byId.set(
+      incoming.id,
+      reconcileTimestamp(incoming) >= reconcileTimestamp(existing) ? incoming : existing
+    );
+  };
+
+  for (const m of local) consider(m);
+  for (const m of cloud) consider(m);
+
+  // Drop tombstoned recordings from the visible set.
+  return Array.from(byId.values()).filter((m) => !m.deletedAt);
+};
+
+// ---------------------------------------------------------------------------
+// Partial updates — patch a single recording without rewriting the whole doc
+// ---------------------------------------------------------------------------
+
+/** Merge a partial patch into a cloud recording, stamping `updatedAt`. */
+export const patchMeetingInCloud = async (
+  uid: string,
+  meetingId: string,
+  patch: Partial<MeetingNote>
+): Promise<void> => {
+  const plain: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined && typeof value !== "function") {
+      plain[key] = value;
     }
   }
+  plain.updatedAt = Date.now();
+  plain._updatedAt = serverTimestamp();
+  await setDoc(meetingDoc(uid, meetingId), plain, { merge: true });
+};
 
-  return Array.from(merged.values());
+/** Soft-delete (tombstone) a recording so the deletion syncs to other devices. */
+export const softDeleteMeetingInCloud = async (
+  uid: string,
+  meetingId: string,
+  audioStorageKey?: string
+): Promise<void> => {
+  await patchMeetingInCloud(uid, meetingId, {
+    deletedAt: Date.now(),
+    status: "completed",
+    claim: null,
+  });
+  if (audioStorageKey) {
+    const storageRef = ref(
+      getStorageBucket(),
+      `users/${uid}/audio/${audioStorageKey}.webm`
+    );
+    await deleteObject(storageRef).catch(() => {
+      // audio may never have been uploaded — non-fatal
+    });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Live cross-device subscription
+// ---------------------------------------------------------------------------
+
+/**
+ * Subscribe to all of a user's recordings in real time. The callback fires
+ * whenever any device adds, updates, or deletes a recording, keeping every
+ * signed-in browser consistent. Returns an unsubscribe function.
+ */
+export const subscribeToUserMeetings = (
+  uid: string,
+  onChange: (meetings: MeetingNote[]) => void,
+  onError?: (err: unknown) => void
+): (() => void) => {
+  const q = query(meetingsCol(uid), orderBy("date", "desc"));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list = snapshot.docs.map((d) => {
+        const data = d.data() as Record<string, unknown>;
+        delete data._updatedAt;
+        return { ...(data as object), id: d.id } as MeetingNote;
+      });
+      onChange(list);
+    },
+    (err) => onError?.(err)
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Cross-device processing claim (lock)
+// ---------------------------------------------------------------------------
+
+/** How long a claim is honoured before another device may steal it. */
+export const CLAIM_TTL_MS = 3 * 60 * 1000;
+
+const claimIsFresh = (
+  claim: { deviceId?: string; claimedAt?: number } | null | undefined,
+  now: number
+): boolean =>
+  Boolean(claim && typeof claim.claimedAt === "number" && now - claim.claimedAt < CLAIM_TTL_MS);
+
+/**
+ * Try to claim a recording for transcription. Returns true if this device now
+ * owns the claim. A transaction guarantees only one device wins, even across
+ * browsers. A stale claim (older than CLAIM_TTL_MS) can be stolen.
+ */
+export const claimRecording = async (
+  uid: string,
+  meetingId: string,
+  deviceId: string,
+  now: number = Date.now()
+): Promise<boolean> => {
+  const refDoc = meetingDoc(uid, meetingId);
+  try {
+    return await runTransaction(getDb(), async (tx) => {
+      const snap = await tx.get(refDoc);
+      const data = snap.exists() ? (snap.data() as MeetingNote) : null;
+      const current = data?.claim ?? null;
+      if (current && current.deviceId !== deviceId && claimIsFresh(current, now)) {
+        return false; // someone else holds a fresh claim
+      }
+      tx.set(
+        refDoc,
+        { claim: { deviceId, claimedAt: now }, updatedAt: now, _updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      return true;
+    });
+  } catch {
+    return false;
+  }
+};
+
+/** Refresh an owned claim's heartbeat so long jobs don't expire their own lock. */
+export const refreshClaim = async (
+  uid: string,
+  meetingId: string,
+  deviceId: string
+): Promise<void> => {
+  await patchMeetingInCloud(uid, meetingId, { claim: { deviceId, claimedAt: Date.now() } });
+};
+
+/** Release a claim once processing finishes (success or failure). */
+export const releaseClaim = async (uid: string, meetingId: string): Promise<void> => {
+  await patchMeetingInCloud(uid, meetingId, { claim: null });
 };

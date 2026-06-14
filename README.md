@@ -1,3 +1,12 @@
+<!-- 📌 AGENTS / DEVS START HERE -->
+> ## 📌 Active Roadmap & To-Dos → [`docs/roadmap/meeting-intelligence-roadmap.md`](docs/roadmap/meeting-intelligence-roadmap.md)
+>
+> Prioritized backlog (tiered by real cost) for the "meeting intelligence OS" direction.
+> **Hard prerequisite before any new feature: decompose `App.tsx` (~5k lines).**
+> - Design specs live in [`docs/superpowers/specs/`](docs/superpowers/specs/).
+> - ✅ Shipped: recording reliability + cross-device sync — see `docs/superpowers/specs/2026-06-14-recording-reliability-design.md`.
+> - ⏭️ Next workstream: redesign + Command Centre — see `docs/superpowers/specs/2026-06-14-redesign-command-centre-design.md`.
+
 ## Session TODO (February 26, 2026)
 
 - Reliability Timeline + Smart Retry UX (impact: very high, effort: low-medium)

@@ -59,6 +59,8 @@ import {
   saveRecapAudio,
   getRecapAudio,
   deleteRecapAudio,
+  saveTranscriptLocal,
+  getTranscriptLocal,
 } from "./services/storageService";
 import { useConnectivityMonitor } from "./hooks/useConnectivityMonitor";
 import {
@@ -70,6 +72,8 @@ import {
   batchSaveMeetingsToCloud,
   subscribeToUserMeetings,
   patchMeetingInCloud,
+  saveTranscriptToCloud,
+  getTranscriptFromCloud,
   claimRecording,
   refreshClaim,
 } from "./services/cloudSyncService";
@@ -1290,7 +1294,41 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
   });
 
   useEffect(() => {
-    localStorage.setItem("scribe_v3_meetings", JSON.stringify(meetings));
+    // Transcripts can be megabytes; they live in IndexedDB, never in the
+    // localStorage metadata array (which shares a ~5 MB origin quota). Offload
+    // any still-inline transcript to IndexedDB first so the strip is lossless,
+    // then persist transcript-free metadata.
+    let cancelled = false;
+    void (async () => {
+      const lightweight = await Promise.all(
+        meetings.map(async (m) => {
+          const hasInline = Array.isArray(m.transcript) && m.transcript.length > 0;
+          if (hasInline && !m.transcriptStored) {
+            await saveTranscriptLocal(m.id, m.transcript).catch(() => {});
+          }
+          return hasInline || m.transcriptStored
+            ? { ...m, transcript: [] as TranscriptSegment[], transcriptStored: true }
+            : m;
+        })
+      );
+      if (cancelled) return;
+      try {
+        localStorage.setItem("scribe_v3_meetings", JSON.stringify(lightweight));
+      } catch {
+        // Quota exceeded even without transcripts — drop oldest, best-effort.
+        try {
+          localStorage.setItem(
+            "scribe_v3_meetings",
+            JSON.stringify(lightweight.slice(0, 50))
+          );
+        } catch {
+          /* nothing more we can safely do */
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [meetings]);
 
   // --- CLOUD SYNC: live subscription keeps every signed-in device consistent ---
@@ -1331,7 +1369,9 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
     if (cloudSyncTimerRef.current) clearTimeout(cloudSyncTimerRef.current);
     cloudSyncTimerRef.current = setTimeout(() => {
       const syncable = meetings.filter(
-        (m) => !m.id.startsWith("seed-") && (m.audioStorageKey || m.transcript.length > 0)
+        (m) =>
+          !m.id.startsWith("seed-") &&
+          (m.audioStorageKey || m.transcript.length > 0 || m.transcriptStored)
       );
       if (syncable.length === 0) return;
       void batchSaveMeetingsToCloud(firebaseUid, syncable).catch((err) =>
@@ -2253,6 +2293,41 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
     [meetings, selectedMeetingId]
   );
 
+  // Transcripts are stored as blobs (IndexedDB / Firebase Storage), not in the
+  // meeting doc. When a meeting whose transcript has been offloaded is opened
+  // but isn't hydrated yet, fetch it on demand: local cache first, cloud second.
+  const hydratingTranscriptRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const m = selectedMeeting;
+    if (!m || !m.transcriptStored) return;
+    if (m.transcript && m.transcript.length > 0) return; // already hydrated
+    if (hydratingTranscriptRef.current.has(m.id)) return;
+
+    hydratingTranscriptRef.current.add(m.id);
+    let cancelled = false;
+    void (async () => {
+      try {
+        let segments = await getTranscriptLocal(m.id).catch(() => null);
+        if ((!segments || segments.length === 0) && firebaseUid) {
+          segments = await getTranscriptFromCloud(firebaseUid, m.id).catch(() => null);
+          if (segments && segments.length > 0) {
+            // Warm the local cache for next time.
+            void saveTranscriptLocal(m.id, segments).catch(() => {});
+          }
+        }
+        if (cancelled || !segments || segments.length === 0) return;
+        setMeetings((prev) =>
+          prev.map((x) => (x.id === m.id ? { ...x, transcript: segments! } : x))
+        );
+      } finally {
+        hydratingTranscriptRef.current.delete(m.id);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMeetingId, selectedMeeting, firebaseUid]);
+
   const filteredMeetings = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const result = !q
@@ -2546,9 +2621,21 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
           ? safeTitleFromTranscript(transcriptSegments, meeting.title || "Untitled Session")
           : meeting.title;
 
+        // Persist the transcript to durable blob storage (IndexedDB locally,
+        // Firebase Storage in the cloud) BEFORE touching Firestore. The doc
+        // itself never carries the transcript — only the `transcriptStored`
+        // flag — so a long recording can't exceed Firestore's 1 MiB limit.
+        await saveTranscriptLocal(meeting.id, transcriptSegments).catch(() => {});
+        if (firebaseUid) {
+          await saveTranscriptToCloud(firebaseUid, meeting.id, transcriptSegments).catch(
+            () => {}
+          );
+        }
+
         const donePatch: Partial<MeetingNote> = {
           title,
           transcript: transcriptSegments,
+          transcriptStored: true,
           summary,
           status: "completed",
           lastError: null,
@@ -2561,6 +2648,8 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
             m.id === meeting.id ? { ...m, ...donePatch, syncStatus: firebaseUid ? "cloud" : "local" } : m
           )
         );
+        // patchMeetingInCloud strips `transcript` automatically; only metadata
+        // (+ the transcriptStored flag) reaches the Firestore document.
         if (firebaseUid) void patchMeetingInCloud(firebaseUid, meeting.id, donePatch).catch(() => {});
         setCompletedTranscriptionId(meeting.id);
       } catch (err) {
@@ -4258,10 +4347,21 @@ const App: React.FC<AppProps> = ({ accountLabel, onSignOut, isAuthBusy = false, 
                         onBlur={(e) => {
                           const newText = e.target.value;
                           if (newText === s.text) return;
-                          setMeetings(prev => prev.map(m => m.id === selectedMeeting.id
-                            ? { ...m, transcript: m.transcript.map(seg => seg.id === s.id ? { ...seg, text: newText } : seg) }
+                          // Capture the target meeting id explicitly so a late
+                          // blur can't write the edit onto a different meeting.
+                          const meetingId = selectedMeeting.id;
+                          const nextTranscript = selectedMeeting.transcript.map(seg =>
+                            seg.id === s.id ? { ...seg, text: newText } : seg
+                          );
+                          setMeetings(prev => prev.map(m => m.id === meetingId
+                            ? { ...m, transcript: nextTranscript, transcriptStored: true }
                             : m
                           ));
+                          // Persist the edit to durable blob storage (and the cloud copy).
+                          void saveTranscriptLocal(meetingId, nextTranscript).catch(() => {});
+                          if (firebaseUid) {
+                            void saveTranscriptToCloud(firebaseUid, meetingId, nextTranscript).catch(() => {});
+                          }
                         }}
                       />
                     </div>

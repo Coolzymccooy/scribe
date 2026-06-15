@@ -6,12 +6,15 @@
  * device unless explicitly uploaded for transcription.
  */
 
+import type { TranscriptSegment } from '../types';
+
 const DB_NAME = 'ScribeAINeuralCache';
 const STORE_NAME = 'audio_blobs';
 const LEGACY_CHUNKS_STORE_NAME = 'audio_chunks_temp';
 const CHUNKS_STORE_NAME = 'audio_chunks_temp_v2';
 const RECAP_CACHE_STORE = 'recap_cache';
-const DB_VERSION = 4;
+const TRANSCRIPTS_STORE = 'transcripts';
+const DB_VERSION = 5;
 
 type RecapCacheRecord = {
   meetingId: string;
@@ -46,6 +49,12 @@ export const initDB = (): Promise<IDBDatabase> => {
 
       if (!db.objectStoreNames.contains(RECAP_CACHE_STORE)) {
         db.createObjectStore(RECAP_CACHE_STORE, { keyPath: 'meetingId' });
+      }
+
+      // High-capacity local home for transcripts (keyed by meetingId), keeping
+      // them out of the ~5 MB localStorage quota used for meeting metadata.
+      if (!db.objectStoreNames.contains(TRANSCRIPTS_STORE)) {
+        db.createObjectStore(TRANSCRIPTS_STORE);
       }
 
       // One-time migration from legacy { sessionId -> Blob[] } format.
@@ -297,6 +306,55 @@ export const deleteRecapAudio = async (meetingId: string): Promise<void> => {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(RECAP_CACHE_STORE, 'readwrite');
     const store = tx.objectStore(RECAP_CACHE_STORE);
+    const request = store.delete(meetingId);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+};
+
+/**
+ * TRANSCRIPT METHODS
+ *
+ * Transcripts can be large (a 1-hour meeting easily exceeds the localStorage
+ * quota), so they live in IndexedDB keyed by meetingId rather than in the
+ * meeting-metadata array persisted to localStorage.
+ */
+
+export const saveTranscriptLocal = async (
+  meetingId: string,
+  transcript: TranscriptSegment[]
+): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(TRANSCRIPTS_STORE, 'readwrite');
+    const store = tx.objectStore(TRANSCRIPTS_STORE);
+    const request = store.put(transcript, meetingId);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+};
+
+export const getTranscriptLocal = async (
+  meetingId: string
+): Promise<TranscriptSegment[] | null> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(TRANSCRIPTS_STORE, 'readonly');
+    const store = tx.objectStore(TRANSCRIPTS_STORE);
+    const request = store.get(meetingId);
+    request.onsuccess = () => {
+      const value = request.result;
+      resolve(Array.isArray(value) ? (value as TranscriptSegment[]) : null);
+    };
+    request.onerror = () => reject(request.error);
+  });
+};
+
+export const deleteTranscriptLocal = async (meetingId: string): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(TRANSCRIPTS_STORE, 'readwrite');
+    const store = tx.objectStore(TRANSCRIPTS_STORE);
     const request = store.delete(meetingId);
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);

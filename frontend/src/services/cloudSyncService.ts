@@ -38,7 +38,7 @@ import {
   deleteObject,
   type FirebaseStorage,
 } from "firebase/storage";
-import type { MeetingNote } from "../types";
+import type { MeetingNote, TranscriptSegment } from "../types";
 
 // ---------------------------------------------------------------------------
 // Singleton accessors — reuse the same app instance initialised in firebase.ts
@@ -73,10 +73,19 @@ const meetingsCol = (uid: string) =>
 const meetingDoc = (uid: string, meetingId: string) =>
   doc(getDb(), "users", uid, "meetings", meetingId);
 
+/**
+ * Fields that must never be written into the Firestore meeting document.
+ * `transcript` can run to many KB/MB for long recordings and would blow
+ * Firestore's 1 MiB document limit — it lives in Firebase Storage instead
+ * (see saveTranscriptToCloud). The doc only keeps the `transcriptStored` flag.
+ */
+const FIRESTORE_OMIT_KEYS = new Set(["transcript"]);
+
 /** Strip fields that Firestore cannot serialise (undefined, functions, etc.) */
 const sanitiseMeetingForFirestore = (m: MeetingNote): Record<string, unknown> => {
   const plain: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(m)) {
+    if (FIRESTORE_OMIT_KEYS.has(key)) continue;
     if (value !== undefined && typeof value !== "function") {
       plain[key] = value;
     }
@@ -129,6 +138,61 @@ export const saveAudioToCloud = async (
   });
 };
 
+// ---------------------------------------------------------------------------
+// Firebase Storage — transcript JSON (kept out of the Firestore doc so long
+// recordings never hit the 1 MiB document limit). Mirrors the audio path.
+//   users/{uid}/transcripts/{meetingId}.json
+// ---------------------------------------------------------------------------
+
+const transcriptRef = (uid: string, meetingId: string) =>
+  ref(getStorageBucket(), `users/${uid}/transcripts/${meetingId}.json`);
+
+/**
+ * Upload a meeting's transcript to Firebase Storage as JSON.
+ *
+ * Uses a resumable upload (like audio) so a long transcript survives the
+ * transient network blips that are common on mobile — the exact condition
+ * that can otherwise leave the cloud copy missing.
+ */
+export const saveTranscriptToCloud = async (
+  uid: string,
+  meetingId: string,
+  transcript: TranscriptSegment[]
+): Promise<void> => {
+  const blob = new Blob([JSON.stringify(transcript)], { type: "application/json" });
+  const task = uploadBytesResumable(transcriptRef(uid, meetingId), blob, {
+    contentType: "application/json",
+  });
+  await new Promise<void>((resolve, reject) => {
+    task.on("state_changed", undefined, (err) => reject(err), () => resolve());
+  });
+};
+
+/** Download a meeting's transcript from Firebase Storage. Returns null if absent. */
+export const getTranscriptFromCloud = async (
+  uid: string,
+  meetingId: string
+): Promise<TranscriptSegment[] | null> => {
+  try {
+    const blob = await getBlob(transcriptRef(uid, meetingId));
+    const text = await blob.text();
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? (parsed as TranscriptSegment[]) : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Delete a meeting's transcript from Firebase Storage. */
+const deleteTranscriptFromCloud = async (
+  uid: string,
+  meetingId: string
+): Promise<void> => {
+  await deleteObject(transcriptRef(uid, meetingId)).catch(() => {
+    // transcript may never have been uploaded — non-fatal
+  });
+};
+
 /** Download audio blob from Firebase Storage. */
 export const getAudioFromCloud = async (
   uid: string,
@@ -155,17 +219,21 @@ export const fetchMeetingsFromCloud = async (
     const data = d.data();
     // Strip Firestore-only fields
     delete data._updatedAt;
+    // Transcripts live in Storage; the doc never carries one. Keep the type's
+    // invariant (always an array) so callers can hydrate lazily.
+    if (!Array.isArray(data.transcript)) data.transcript = [];
     return { ...data, id: d.id } as MeetingNote;
   });
 };
 
-/** Delete a meeting and its audio from the cloud. */
+/** Delete a meeting and its audio + transcript from the cloud. */
 export const deleteMeetingFromCloud = async (
   uid: string,
   meetingId: string,
   audioStorageKey?: string
 ): Promise<void> => {
   await deleteDoc(meetingDoc(uid, meetingId));
+  await deleteTranscriptFromCloud(uid, meetingId);
   if (audioStorageKey) {
     const storageRef = ref(
       getStorageBucket(),
@@ -223,17 +291,29 @@ export const mergeMeetings = (
 ): MeetingNote[] => {
   const byId = new Map<string, MeetingNote>();
 
+  const hasTranscript = (m: MeetingNote): boolean =>
+    Array.isArray(m.transcript) && m.transcript.length > 0;
+
   const consider = (incoming: MeetingNote) => {
     const existing = byId.get(incoming.id);
     if (!existing) {
       byId.set(incoming.id, incoming);
       return;
     }
-    // Whichever copy was touched most recently wins outright.
-    byId.set(
-      incoming.id,
-      reconcileTimestamp(incoming) >= reconcileTimestamp(existing) ? incoming : existing
-    );
+    // Whichever copy was touched most recently wins on metadata.
+    const winner =
+      reconcileTimestamp(incoming) >= reconcileTimestamp(existing) ? incoming : existing;
+    const loser = winner === incoming ? existing : incoming;
+
+    // Transcripts live in Storage/IndexedDB, not the Firestore doc, so a cloud
+    // (or metadata-only) copy arrives with an empty `transcript`. If the winner
+    // lacks one but the loser still holds a hydrated transcript, carry it
+    // forward — but never onto a tombstoned recording.
+    const merged =
+      !winner.deletedAt && !hasTranscript(winner) && hasTranscript(loser)
+        ? { ...winner, transcript: loser.transcript }
+        : winner;
+    byId.set(incoming.id, merged);
   };
 
   for (const m of local) consider(m);
@@ -255,6 +335,7 @@ export const patchMeetingInCloud = async (
 ): Promise<void> => {
   const plain: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(patch)) {
+    if (FIRESTORE_OMIT_KEYS.has(key)) continue; // transcript lives in Storage
     if (value !== undefined && typeof value !== "function") {
       plain[key] = value;
     }
@@ -275,6 +356,7 @@ export const softDeleteMeetingInCloud = async (
     status: "completed",
     claim: null,
   });
+  await deleteTranscriptFromCloud(uid, meetingId);
   if (audioStorageKey) {
     const storageRef = ref(
       getStorageBucket(),
@@ -307,6 +389,7 @@ export const subscribeToUserMeetings = (
       const list = snapshot.docs.map((d) => {
         const data = d.data() as Record<string, unknown>;
         delete data._updatedAt;
+        if (!Array.isArray(data.transcript)) data.transcript = [];
         return { ...(data as object), id: d.id } as MeetingNote;
       });
       onChange(list);

@@ -50,4 +50,33 @@ describe("mergeMeetings (last-write-wins + tombstones)", () => {
     const cloud = [m({ id: "a", title: "stale", updatedAt: 200 })];
     expect(mergeMeetings(local, cloud)).toHaveLength(0);
   });
+
+  // Transcripts now live in Storage/IndexedDB, not the Firestore doc, so the
+  // cloud copy arrives with an empty `transcript`. A newer metadata-only cloud
+  // snapshot (e.g. a claim heartbeat) must NOT wipe an already-hydrated
+  // in-memory transcript — we carry the populated one forward.
+  const seg = { id: "s1", speaker: "A", text: "hello", startTime: 0 } as any;
+
+  it("preserves a hydrated transcript when the newer winner has none", () => {
+    const local = [m({ id: "a", title: "old", updatedAt: 100, transcript: [seg] })];
+    const cloud = [m({ id: "a", title: "new", updatedAt: 200, transcript: [], transcriptStored: true })];
+    const merged = mergeMeetings(local, cloud);
+    expect(merged[0].title).toBe("new"); // metadata still last-write-wins
+    expect(merged[0].transcript).toHaveLength(1); // transcript not lost
+    expect(merged[0].transcript[0].text).toBe("hello");
+  });
+
+  it("prefers the winner's own transcript when it has one", () => {
+    const local = [m({ id: "a", updatedAt: 100, transcript: [seg] })];
+    const cloud = [
+      m({ id: "a", updatedAt: 200, transcript: [{ ...seg, text: "updated" }] }),
+    ];
+    expect(mergeMeetings(local, cloud)[0].transcript[0].text).toBe("updated");
+  });
+
+  it("does not carry a transcript onto a tombstoned recording", () => {
+    const local = [m({ id: "a", updatedAt: 100, transcript: [seg] })];
+    const cloud = [m({ id: "a", updatedAt: 200, deletedAt: 200, transcript: [] })];
+    expect(mergeMeetings(local, cloud)).toHaveLength(0);
+  });
 });

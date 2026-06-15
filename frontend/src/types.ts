@@ -55,6 +55,14 @@ export interface MeetingNote {
   type: MeetingType;
 
   transcript: TranscriptSegment[];
+  /**
+   * True once the transcript has been offloaded to durable blob storage
+   * (Firebase Storage in the cloud, IndexedDB locally) rather than stored
+   * inline. The Firestore doc and localStorage metadata never carry the
+   * transcript array, so long recordings can't exceed size limits. When this
+   * is set but `transcript` is empty, hydrate it on demand.
+   */
+  transcriptStored?: boolean;
 
   summary?: AISummary; // UI always uses normalized structured format
   rawSummary?: SummaryPayload; // keep original payload if you want

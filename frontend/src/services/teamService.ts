@@ -175,6 +175,14 @@ export const refreshInviteCode = async (orgId: string): Promise<string> => {
 
 // ── Shared Meetings ───────────────────────────────────────────────────────────
 
+/**
+ * Fields excluded from the shared team document. `transcript` can be many
+ * KB/MB for long recordings and would blow Firestore's 1 MiB document limit
+ * (the same failure that loses personal transcripts). The team feed only ever
+ * renders the summary — never the transcript — so omitting it has no UI impact.
+ */
+const TEAM_DOC_OMIT_KEYS = new Set(["transcript"]);
+
 /** Share a personal meeting to the org's shared library. */
 export const shareToOrg = async (
   orgId: string,
@@ -184,6 +192,7 @@ export const shareToOrg = async (
   const teamMeeting: TeamMeeting = { ...meeting, orgId, sharedBy: uid };
   const plain: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(teamMeeting)) {
+    if (TEAM_DOC_OMIT_KEYS.has(k)) continue;
     if (v !== undefined && typeof v !== "function") plain[k] = v;
   }
   plain._updatedAt = serverTimestamp();
@@ -199,6 +208,8 @@ export const fetchOrgMeetings = async (
   return snap.docs.map((d) => {
     const data = d.data();
     delete data._updatedAt;
+    // Shared docs never carry a transcript; keep the type's array invariant.
+    if (!Array.isArray(data.transcript)) data.transcript = [];
     return { ...data, id: d.id } as TeamMeeting;
   });
 };

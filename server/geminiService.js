@@ -4,6 +4,7 @@ import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
+import { normalizeAudio } from './audioNormalizer.js';
 
 /**
  * Gemini Service
@@ -183,19 +184,28 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
     6. If silence/no speech, return an empty array.
   `;
 
+  // Normalize first: re-encode to a clean 16 kHz mono m4a so malformed or
+  // interrupted recordings (missing duration, corrupt Opus packets) decode
+  // reliably instead of yielding a degenerate transcript. Falls back to the
+  // original file if ffmpeg is unavailable.
+  const normalized = await normalizeAudio(audioFilePath, mimeType);
+  const srcPath = normalized.path;
+  const srcMime = normalized.mimeType;
+
+  try {
   // Check file size without reading entire file into memory
-  const fileStat = await fs.stat(audioFilePath);
+  const fileStat = await fs.stat(srcPath);
   const INLINE_LIMIT = 15 * 1024 * 1024; // 15MB
 
   if (fileStat.size <= INLINE_LIMIT) {
     // Small/medium recordings: use inlineData directly — proven reliable
-    const fileBuffer = await fs.readFile(audioFilePath);
+    const fileBuffer = await fs.readFile(srcPath);
     const base64Audio = fileBuffer.toString('base64');
     const response = await ai.models.generateContent({
       model: TRANSCRIBE_MODEL,
       contents: {
         parts: [
-          { inlineData: { data: base64Audio, mimeType } },
+          { inlineData: { data: base64Audio, mimeType: srcMime } },
           { text: prompt },
         ],
       },
@@ -232,14 +242,14 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
   // Large recordings (>15MB): upload directly from multer temp path via the Gemini File API
   // No need to copy — multer already wrote to disk. We rename to add an extension for Gemini.
   let uploadResult;
-  const tempFilename = crypto.randomUUID() + (mimeType.includes('mp4') ? '.mp4' : mimeType.includes('wav') ? '.wav' : '.webm');
+  const tempFilename = crypto.randomUUID() + (srcMime.includes('mp4') ? '.mp4' : srcMime.includes('wav') ? '.wav' : '.webm');
   const tempFilePath = path.join(os.tmpdir(), tempFilename);
-  await fs.copyFile(audioFilePath, tempFilePath);
+  await fs.copyFile(srcPath, tempFilePath);
 
   try {
     uploadResult = await ai.files.upload({
       file: tempFilePath,
-      config: { mimeType },
+      config: { mimeType: srcMime },
     });
 
     const FILE_API_POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes max for Gemini to process upload
@@ -259,7 +269,7 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
 
     const response = await ai.models.generateContent({
       model: TRANSCRIBE_MODEL,
-      contents: { parts: [{ fileData: { fileUri: uploadResult.uri, mimeType } }, { text: prompt }] },
+      contents: { parts: [{ fileData: { fileUri: uploadResult.uri, mimeType: srcMime } }, { text: prompt }] },
       config: {
         responseMimeType: 'application/json',
         responseSchema: {
@@ -295,6 +305,10 @@ export async function transcribeAudio(audioFilePath, mimeType, accent) {
         console.error('Failed to clean up Gemini file:', err)
       );
     }
+  }
+  } finally {
+    // Remove the normalized temp file (no-op if we fell back to the original).
+    await normalized.cleanup();
   }
 }
 

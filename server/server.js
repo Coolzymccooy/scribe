@@ -12,7 +12,7 @@ import {
   generateEmailDraft,
   generateAudioRecap,
   askSupport
-} from './geminiService.js';
+} from './aiService.js';
 import dotenv from 'dotenv';
 import os from 'os';
 dotenv.config();
